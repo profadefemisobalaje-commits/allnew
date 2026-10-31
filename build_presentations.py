@@ -5,18 +5,20 @@ Bachelor of Artificial Intelligence and Robotics Engineering
 
 Generates a premium, cinematic 6-hour orientation lecture PDF for every course subject.
 Every slide footer carries: TRIUNE BIBLICAL UNIVERSITY GLOBAL EXTENSION USA
+Includes AI-generated photorealistic cover imagery and hand-drawn vector diagrams.
 """
 import os
 import re
-from math import sin, cos, pi
+from math import sin, cos, pi, sqrt
 
 from reportlab.lib.colors import Color, HexColor
 from reportlab.pdfgen import canvas
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.lib.utils import ImageReader
 
 # ----------------------------------------------------------------------------
-# Fonts (registered TTFs for a premium serif/sans cinematic look)
+# Fonts
 # ----------------------------------------------------------------------------
 FONT_DIR = "/usr/share/fonts/truetype/dejavu"
 pdfmetrics.registerFont(TTFont("Serif", f"{FONT_DIR}/DejaVuSerif.ttf"))
@@ -24,32 +26,30 @@ pdfmetrics.registerFont(TTFont("Serif-B", f"{FONT_DIR}/DejaVuSerif-Bold.ttf"))
 pdfmetrics.registerFont(TTFont("Sans", f"{FONT_DIR}/DejaVuSans.ttf"))
 pdfmetrics.registerFont(TTFont("Sans-B", f"{FONT_DIR}/DejaVuSans-Bold.ttf"))
 
-DISPLAY = "Serif-B"      # premium cinematic display
-DISPLAY_R = "Serif"      # serif regular
-BODY = "Sans"            # clean body
-BODY_B = "Sans-B"        # body bold
+DISPLAY = "Serif-B"
+DISPLAY_R = "Serif"
+BODY = "Sans"
+BODY_B = "Sans-B"
 
 UNIVERSITY = "TRIUNE BIBLICAL UNIVERSITY GLOBAL EXTENSION USA"
-UNIVERSITY_SHORT = "TRIUNE BIBLICAL UNIVERSITY"
 
 # ----------------------------------------------------------------------------
-# Palette — deep cinematic night + luxury gold
+# Palette
 # ----------------------------------------------------------------------------
-BG        = HexColor("#0A0E1A")   # near-black navy background
-BG_PANEL  = HexColor("#12192E")   # panel slightly lighter
-GOLD      = HexColor("#C9A227")   # luxury gold accent
-GOLD_LT   = HexColor("#E3D49B")   # pale gold
-GOLD_DK   = HexColor("#8F731E")   # dark gold
-INK       = HexColor("#F4F6FA")   # off-white text
-MUTED     = HexColor("#9FB0C4")   # muted slate
-LINE      = HexColor("#2A3550")   # subtle divider
-CREDIT    = HexColor("#7DD3FC")   # soft cyan for credits
+BG        = HexColor("#0A0E1A")
+BG_PANEL  = HexColor("#12192E")
+GOLD      = HexColor("#C9A227")
+GOLD_LT   = HexColor("#E3D49B")
+GOLD_DK   = HexColor("#8F731E")
+INK       = HexColor("#F4F6FA")
+MUTED     = HexColor("#9FB0C4")
+LINE      = HexColor("#2A3550")
+CREDIT    = HexColor("#7DD3FC")
 
-# ----------------------------------------------------------------------------
-# Geometry — 16:9 widescreen (points)
-# ----------------------------------------------------------------------------
 W, H = 960.0, 540.0
-M = 60.0   # side margin
+M = 60.0
+
+ASSET_DIR = "/home/user/allnew/assets/images"
 
 # ----------------------------------------------------------------------------
 # Helpers
@@ -61,7 +61,6 @@ def slugify(text):
     return t[:60]
 
 def wrap(text, font, size, max_w):
-    """Simple word-wrap returning list of lines."""
     words = text.split()
     lines, cur = [], ""
     for wd in words:
@@ -88,7 +87,6 @@ def draw_text(c, x, y, text, font=BODY, size=13, color=INK, align="left"):
     return y
 
 def draw_paragraph(c, x, y, text, font=BODY, size=12, color=INK, max_w=400, leading=16, bullet=False):
-    """Draw wrapped paragraph, return new y (lower)."""
     lines = wrap(text, font, size, max_w)
     for i, ln in enumerate(lines):
         if bullet:
@@ -108,17 +106,14 @@ def rect_round(c, x, y, w, h, r=8, fill=None, stroke=None, lw=1):
     c.roundRect(x, y, w, h, r, stroke=bool(stroke), fill=bool(fill))
 
 def spotlight(c, cx, cy, max_r, steps=18):
-    """Soft radial spotlight (cinematic)."""
     for i in range(steps, 0, -1):
         t = i / steps
         r = max_r * t
-        alpha = 0.06 * (1 - t)  # strongest at center, fades out
+        alpha = 0.06 * (1 - t)
         c.setFillColor(Color(1, 0.82, 0.35, alpha=alpha))
         c.circle(cx, cy, r, stroke=0, fill=1)
 
 def gradient_bg(c, top=HexColor("#0F172A"), bottom=HexColor("#0A0E1A")):
-    """Subtle vertical gradient background."""
-    import colorsys
     steps = 60
     band = H / steps
     r1, g1, b1 = top.red, top.green, top.blue
@@ -132,7 +127,6 @@ def gradient_bg(c, top=HexColor("#0F172A"), bottom=HexColor("#0A0E1A")):
         c.rect(0, i * band, W, band + 0.5, stroke=0, fill=1)
 
 def footer(c, page, course_code, course_title_short):
-    """University footer on every slide."""
     c.setStrokeColor(LINE)
     c.setLineWidth(0.8)
     c.line(M, 40, W - M, 40)
@@ -147,7 +141,6 @@ def footer(c, page, course_code, course_title_short):
     c.drawCentredString(W / 2, 16, "Orientation Lecture  •  6 Hours  •  Bachelor of Artificial Intelligence and Robotics Engineering")
 
 def header(c, course_code, course_title, section_tag):
-    """Premium content-slide header."""
     c.setStrokeColor(GOLD)
     c.setLineWidth(1.4)
     c.line(M, H - 46, W - M, H - 46)
@@ -159,23 +152,843 @@ def header(c, course_code, course_title, section_tag):
     c.drawRightString(W - M, H - 38, section_tag)
     c.setFont(DISPLAY_R, 11.5)
     c.setFillColor(INK)
-    # short title centered under rule
     c.drawCentredString(W / 2, H - 66, course_title.upper())
 
 # ----------------------------------------------------------------------------
-# Cover slide (cinematic, premium)
+# Image embedding helper
+# ----------------------------------------------------------------------------
+def draw_image(c, path, x, y, w, h, mask="auto"):
+    """Draw an image fitted into box (x,y,w,h) preserving aspect, centered."""
+    if not os.path.exists(path):
+        return False
+    try:
+        img = ImageReader(path)
+        iw, ih = img.getSize()
+        aspect = iw / ih
+        box_aspect = w / h
+        if aspect > box_aspect:
+            nw = w
+            nh = w / aspect
+        else:
+            nh = h
+            nw = h * aspect
+        cx = x + (w - nw) / 2
+        cy = y + (h - nh) / 2
+        c.drawImage(img, cx, cy, nw, nh, mask=mask)
+        return True
+    except Exception:
+        return False
+
+# ----------------------------------------------------------------------------
+# Vector diagram primitives
+# ----------------------------------------------------------------------------
+def arrow(c, x1, y1, x2, y2, color=GOLD, lw=1.5, head=6):
+    c.setStrokeColor(color)
+    c.setLineWidth(lw)
+    c.line(x1, y1, x2, y2)
+    # head
+    import math
+    ang = math.atan2(y2 - y1, x2 - x1)
+    c.setFillColor(color)
+    c.line(x2, y2, x2 - head * cos(ang - 0.4), y2 - head * sin(ang - 0.4))
+    c.line(x2, y2, x2 - head * cos(ang + 0.4), y2 - head * sin(ang + 0.4))
+
+def label(c, x, y, text, font=BODY, size=9, color=INK, center=False):
+    c.setFont(font, size)
+    c.setFillColor(color)
+    if center:
+        c.drawCentredString(x, y, text)
+    else:
+        c.drawString(x, y, text)
+
+def chip(c, x, y, w, h, text, fill=GOLD_DK, txt_color=INK, size=8.5, r=4):
+    rect_round(c, x, y, w, h, r=r, fill=fill)
+    c.setFont(BODY_B, size)
+    c.setFillColor(txt_color)
+    c.drawCentredString(x + w / 2, y + h / 2 - size / 3, text)
+
+# ============================================================================
+# DIAGRAM FUNCTIONS  (each draws into a box x,y,w,h)
+# ============================================================================
+
+def diag_peas(c, x, y, w, h):
+    """PEAS framework for intelligent agents."""
+    cx = x + w / 2
+    cy = y + h / 2
+    # central agent
+    c.setFillColor(BG_PANEL)
+    c.setStrokeColor(GOLD)
+    c.setLineWidth(1.2)
+    c.circle(cx, cy, 22, stroke=1, fill=1)
+    label(c, cx, cy - 3, "AGENT", font=BODY_B, size=8, center=True)
+    # four boxes around
+    boxes = [
+        (cx - w/2 + 18, cy + h/2 - 34, "PERFORMANCE"),
+        (cx + w/2 - 78, cy + h/2 - 34, "ENVIRONMENT"),
+        (cx - w/2 + 18, cy - h/2 + 14, "ACTUATORS"),
+        (cx + w/2 - 78, cy - h/2 + 14, "SENSORS"),
+    ]
+    for bx, by, txt in boxes:
+        rect_round(c, bx, by, 60, 20, r=4, fill=HexColor("#1B253A"), stroke=LINE, lw=0.8)
+        label(c, bx + 30, by + 7, txt, font=BODY_B, size=7.5, center=True)
+        arrow(c, cx, cy, bx + 30, by + 10 if by > cy else bx + 30, by - 10)
+
+def diag_neural(c, x, y, w, h):
+    """Simple neural network diagram."""
+    layers = [3, 4, 3]
+    lw_ = w / (len(layers) + 1)
+    node_r = 5
+    col_x = [x + lw_ * (i + 1) for i in range(len(layers))]
+    # nodes
+    for li, n in enumerate(layers):
+        start_y = y + h / 2 - (n - 1) * 14
+        for ni in range(n):
+            nx = col_x[li]
+            ny = start_y + ni * 28
+            c.setFillColor(GOLD_LT if li in (0, len(layers)-1) else GOLD)
+            c.circle(nx, ny, node_r, stroke=1, fill=1)
+    # connections
+    for li in range(len(layers) - 1):
+        n1 = layers[li]; n2 = layers[li + 1]
+        sy1 = y + h / 2 - (n1 - 1) * 14
+        sy2 = y + h / 2 - (n2 - 1) * 14
+        for i in range(n1):
+            for j in range(n2):
+                c.setStrokeColor(Color(1, 0.78, 0.3, alpha=0.15))
+                c.setLineWidth(0.5)
+                c.line(col_x[li], sy1 + i * 28, col_x[li + 1], sy2 + j * 28)
+    label(c, x + w / 2, y + h - 10, "NEURAL NETWORK", font=BODY_B, size=8, center=True, color=GOLD_LT)
+
+def diag_pid(c, x, y, w, h):
+    """PID control block diagram."""
+    # blocks
+    bx, by, bw, bh = x + 10, y + h/2 - 22, 70, 44
+    rect_round(c, bx, by, bw, bh, r=5, fill=BG_PANEL, stroke=GOLD, lw=1)
+    label(c, bx + bw/2, by + bh/2 + 3, "CONTROLLER", font=BODY_B, size=7.5, center=True, color=GOLD_LT)
+    label(c, bx + bw/2, by + bh/2 - 10, "(PID)", font=BODY, size=7, center=True)
+    # sum point
+    c.setStrokeColor(GOLD); c.setLineWidth(1)
+    c.circle(x + 30, y + h/2, 8, stroke=1, fill=0)
+    label(c, x + 30, y + h/2 - 2, "+/-", font=BODY_B, size=8, center=True)
+    # plant
+    px = bx + bw + 40
+    rect_round(c, px, by, bw, bh, r=5, fill=BG_PANEL, stroke=GOLD, lw=1)
+    label(c, px + bw/2, by + bh/2 + 3, "PLANT", font=BODY_B, size=7.5, center=True, color=GOLD_LT)
+    label(c, px + bw/2, by + bh/2 - 10, "(ROBOT)", font=BODY, size=7, center=True)
+    # arrows
+    arrow(c, x + 14, y + h/2, x + 26, y + h/2)          # ref to sum
+    arrow(c, x + 38, y + h/2, bx, y + h/2)              # sum to controller
+    arrow(c, bx + bw, y + h/2, px, y + h/2)             # controller to plant
+    arrow(c, px + bw, y + h/2, px + bw + 24, y + h/2)   # plant out
+    arrow(c, px + bw + 12, y + h/2 + 2, x + 26, y + h/2 + 18, color=CREDIT)  # feedback
+    arrow(c, x + 26, y + h/2 + 18, x + 14, y + h/2 + 18, color=CREDIT)
+    label(c, x + 14 - 28, y + h/2 + 4, "r(t)", font=BODY, size=7.5, color=CREDIT)
+    label(c, px + bw + 28, y + h/2 + 4, "y(t)", font=BODY, size=7.5, color=CREDIT)
+
+def diag_kalman(c, x, y, w, h):
+    """Kalman filter predict/update cycle."""
+    # Predict box
+    rect_round(c, x + 10, y + h/2 - 20, 70, 40, r=5, fill=BG_PANEL, stroke=GOLD, lw=1)
+    label(c, x + 45, y + h/2 + 2, "PREDICT", font=BODY_B, size=8, center=True, color=GOLD_LT)
+    label(c, x + 45, y + h/2 - 10, "x\u2217, P\u2217", font=BODY, size=7, center=True)
+    # Update box
+    rect_round(c, x + w - 80, y + h/2 - 20, 70, 40, r=5, fill=BG_PANEL, stroke=GOLD, lw=1)
+    label(c, x + w - 45, y + h/2 + 2, "UPDATE", font=BODY_B, size=8, center=True, color=GOLD_LT)
+    label(c, x + w - 45, y + h/2 - 10, "x, P", font=BODY, size=7, center=True)
+    arrow(c, x + 80, y + h/2, x + w - 80, y + h/2)   # predict -> update
+    arrow(c, x + w - 10, y + h/2, x + 10, y + h/2 - 40, color=CREDIT)  # loop back
+    label(c, x + 10, y + h/2 - 44, "z (measurement)", font=BODY, size=7, color=CREDIT)
+    label(c, x + w/2 - 20, y + h/2 + 26, "u (control)", font=BODY, size=7, color=GOLD_LT)
+
+def diag_slam(c, x, y, w, h):
+    """SLAM pose-graph."""
+    # nodes (poses)
+    poses = [(x+40, y+h/2+30), (x+w-40, y+h/2+30), (x+w-40, y+h/2-30), (x+40, y+h/2-30)]
+    for px, py in poses:
+        c.setFillColor(GOLD)
+        c.circle(px, py, 7, stroke=1, fill=1)
+    # edges
+    for i in range(4):
+        p1 = poses[i]; p2 = poses[(i+1) % 4]
+        c.setStrokeColor(GOLD_LT); c.setLineWidth(1.5)
+        c.line(p1[0], p1[1], p2[0], p2[1])
+    # loop closure edge (diagonal)
+    c.setStrokeColor(CREDIT); c.setLineWidth(1.5)
+    c.setDash(1, 2)
+    c.line(poses[0][0], poses[0][1], poses[2][0], poses[2][1])
+    c.setDash()
+    label(c, x + w/2, y + h - 10, "POSE-GRAPH SLAM", font=BODY_B, size=8, center=True, color=GOLD_LT)
+    label(c, x + 10, y + h/2 - 40, "loop closure", font=BODY, size=7, color=CREDIT)
+
+def diag_rrt(c, x, y, w, h):
+    """RRT* path planning tree."""
+    root = (x + 60, y + 40)
+    goal = (x + w - 60, y + h - 60)
+    c.setFillColor(GOLD)
+    c.circle(root[0], root[1], 5, stroke=1, fill=1)
+    c.setFillColor(CREDIT)
+    c.circle(goal[0], goal[1], 5, stroke=1, fill=1)
+    # tree branches
+    branches = [
+        (root, (root[0]+70, root[1]+50)), (root, (root[0]+40, root[1]+90)),
+        ((root[0]+70, root[1]+50), (root[0]+140, root[1]+60)),
+        ((root[0]+40, root[1]+90), (root[0]+100, root[1]+140)),
+        ((root[0]+140, root[1]+60), goal),
+        ((root[0]+100, root[1]+140), goal),
+    ]
+    for p1, p2 in branches:
+        c.setStrokeColor(GOLD_LT); c.setLineWidth(1.2)
+        c.line(p1[0], p1[1], p2[0], p2[1])
+    # obstacles
+    c.setFillColor(HexColor("#2A3550"))
+    for ox, oy in [(x+120, y+100), (x+w-100, y+150)]:
+        c.rect(ox, oy, 30, 30, stroke=0, fill=1)
+    label(c, x + w/2, y + h - 10, "RRT* PATH PLANNING", font=BODY_B, size=8, center=True, color=GOLD_LT)
+
+def diag_ros(c, x, y, w, h):
+    """ROS node graph."""
+    nodes = [
+        (x + 50, y + h/2 + 40, "sensor"),
+        (x + w/2, y + h/2 + 40, "planner"),
+        (x + w - 50, y + h/2 + 40, "actuator"),
+        (x + w/2, y + h/2 - 40, "rviz"),
+    ]
+    for nx, ny, nm in nodes:
+        rect_round(c, nx - 28, ny - 14, 56, 28, r=6, fill=BG_PANEL, stroke=GOLD, lw=1)
+        label(c, nx, ny - 2, nm.upper(), font=BODY_B, size=7.5, center=True, color=GOLD_LT)
+    # edges (topics)
+    c.setStrokeColor(CREDIT); c.setLineWidth(1)
+    c.line(x + 50, y + h/2 + 26, x + w/2 - 28, y + h/2 + 26)
+    c.line(x + w/2 + 28, y + h/2 + 26, x + w - 50, y + h/2 + 26)
+    c.line(x + w/2, y + h/2 + 12, x + w/2, y + h/2 - 12)
+    label(c, x + w/2 - 10, y + h/2 + 32, "/topic", font=BODY, size=6.5, color=CREDIT)
+    label(c, x + w/2, y + h - 10, "ROS NODE GRAPH", font=BODY_B, size=8, center=True, color=GOLD_LT)
+
+def diag_fuzzy(c, x, y, w, h):
+    """Fuzzy membership functions."""
+    c.setStrokeColor(GOLD); c.setLineWidth(1.5)
+    c.line(x + 30, y + 40, x + w - 30, y + 40)  # x axis
+    c.setStrokeColor(GOLD_LT); c.setLineWidth(1.2)
+    c.line(x + 50, y + 40, x + 90, y + 120)    # low
+    c.line(x + 90, y + 120, x + 130, y + 40)
+    c.setStrokeColor(CREDIT); c.setLineWidth(1.2)
+    c.line(x + 130, y + 40, x + 190, y + 140)  # high
+    c.line(x + 190, y + 140, x + 250, y + 40)
+    label(c, x + 90, y + 128, "\u03bc", font=BODY_B, size=9, center=True, color=GOLD_LT)
+    label(c, x + 90, y + 24, "LOW", font=BODY_B, size=7, center=True, color=GOLD_LT)
+    label(c, x + 190, y + 148, "HIGH", font=BODY_B, size=7, center=True, color=CREDIT)
+    label(c, x + w/2, y + h - 10, "FUZZY MEMBERSHIP", font=BODY_B, size=8, center=True, color=GOLD_LT)
+
+def diag_loss(c, x, y, w, h):
+    """Loss curve / gradient descent."""
+    pts = [(x+40, y+100), (x+90, y+70), (x+140, y+55), (x+190, y+50), (x+240, y+48), (x+290, y+46)]
+    c.setStrokeColor(GOLD); c.setLineWidth(1.5)
+    for i in range(len(pts)-1):
+        c.line(pts[i][0], pts[i][1], pts[i+1][0], pts[i+1][1])
+    for px, py in pts:
+        c.setFillColor(GOLD)
+        c.circle(px, py, 3, stroke=0, fill=1)
+    c.setStrokeColor(CREDIT); c.setLineWidth(1)
+    c.line(x+30, y+10, x+310, y+10)  # x axis
+    label(c, x + w/2, y + h - 10, "LOSS vs. EPOCHS", font=BODY_B, size=8, center=True, color=GOLD_LT)
+    label(c, x + 10, y + 60, "loss", font=BODY, size=7, color=GOLD_LT)
+
+def diag_kinematic(c, x, y, w, h):
+    """2-link kinematic chain."""
+    p0 = (x + 60, y + 80)
+    p1 = (x + 160, y + 80)
+    p2 = (x + 260, y + 140)
+    c.setStrokeColor(GOLD); c.setLineWidth(3)
+    c.line(p0[0], p0[1], p1[0], p1[1])
+    c.line(p1[0], p1[1], p2[0], p2[1])
+    c.setFillColor(GOLD)
+    c.circle(p0[0], p0[1], 6, stroke=0, fill=1)
+    c.circle(p1[0], p1[1], 6, stroke=0, fill=1)
+    c.circle(p2[0], p2[1], 6, stroke=0, fill=1)
+    label(c, p0[0]-10, p0[1]-14, "\u03b81", font=BODY, size=8, color=GOLD_LT)
+    label(c, p1[0]-10, p1[1]-14, "\u03b82", font=BODY, size=8, color=GOLD_LT)
+    label(c, p2[0]+4, p2[1]+4, "E-E", font=BODY_B, size=7, center=True, color=CREDIT)
+    label(c, x + w/2, y + h - 10, "2-LINK KINEMATIC CHAIN", font=BODY_B, size=8, center=True, color=GOLD_LT)
+
+def diag_big_o(c, x, y, w, h):
+    """Big-O growth curves."""
+    c.setStrokeColor(GOLD); c.setLineWidth(1.5)
+    c.line(x+40, y+280, x+40, y+40)   # y axis
+    c.setStrokeColor(CREDIT); c.setLineWidth(1.2)
+    c.line(x+40, y+280, x+140, y+200)  # O(n)
+    c.setStrokeColor(GOLD_LT); c.setLineWidth(1.2)
+    c.line(x+40, y+280, x+220, y+60)   # O(n^2)
+    label(c, x+150, y+206, "O(n)", font=BODY_B, size=8, color=CREDIT)
+    label(c, x+230, y+66, "O(n\u00b2)", font=BODY_B, size=8, color=GOLD_LT)
+    label(c, x + w/2, y + h - 10, "COMPLEXITY GROWTH", font=BODY_B, size=8, center=True, color=GOLD_LT)
+
+def diag_iot(c, x, y, w, h):
+    """IoT architecture layers."""
+    layers = [
+        (y + h - 30, "APPLICATION", GOLD_LT),
+        (y + h - 78, "PLATFORM / CLOUD", GOLD),
+        (y + h - 126, "GATEWAY", CREDIT),
+        (y + h - 174, "SENSORS / DEVICES", GOLD),
+    ]
+    for yy, nm, col in layers:
+        rect_round(c, x + 20, yy - 20, w - 40, 36, r=6, fill=BG_PANEL, stroke=col, lw=1)
+        label(c, x + w/2, yy - 4, nm, font=BODY_B, size=8, center=True, color=col)
+    label(c, x + w/2, y + h - 10, "IOT ARCHITECTURE", font=BODY_B, size=8, center=True, color=GOLD_LT)
+
+def diag_control_block(c, x, y, w, h):
+    """Generic control block."""
+    rect_round(c, x + w/2 - 35, y + h/2 - 20, 70, 40, r=5, fill=BG_PANEL, stroke=GOLD, lw=1)
+    label(c, x + w/2, y + h/2 + 2, "G(s)", font=BODY_B, size=10, center=True, color=GOLD_LT)
+    arrow(c, x + 20, y + h/2, x + w/2 - 35, y + h/2)
+    arrow(c, x + w/2 + 35, y + h/2, x + w - 20, y + h/2)
+    label(c, x + 10, y + h/2 + 4, "u", font=BODY, size=8, color=CREDIT)
+    label(c, x + w - 14, y + h/2 + 4, "y", font=BODY, size=8, color=CREDIT)
+    label(c, x + w/2, y + h - 10, "CONTROL BLOCK", font=BODY_B, size=8, center=True, color=GOLD_LT)
+
+def diag_sense_plan_act(c, x, y, w, h):
+    """Sense-Plan-Act cycle."""
+    items = [
+        (x + w/2, y + h - 34, "PLAN", GOLD_LT),
+        (x + w - 40, y + h/2 + 20, "ACT", GOLD),
+        (x + w/2, y + 34, "SENSE", CREDIT),
+    ]
+    for px, py, nm, col in items:
+        c.setFillColor(BG_PANEL)
+        c.setStrokeColor(col)
+        c.setLineWidth(1.2)
+        c.circle(px, py, 20, stroke=1, fill=1)
+        label(c, px, py - 2, nm, font=BODY_B, size=8.5, center=True, color=col)
+    import math
+    c.setStrokeColor(GOLD); c.setLineWidth(1.2)
+    c.line(x + w/2, y + h - 54, x + w - 22, y + h/2 + 38)
+    c.line(x + w - 22, y + h/2 + 38, x + w/2, y + 54)
+    c.line(x + w/2, y + 54, x + 22, y + h/2 + 38)
+    c.line(x + 22, y + h/2 + 38, x + w/2, y + h - 54)
+    label(c, x + w/2, y + h - 10, "SENSE\u2192PLAN\u2192ACT", font=BODY_B, size=8, center=True, color=GOLD_LT)
+
+def diag_ml_pipeline(c, x, y, w, h):
+    """ML pipeline."""
+    stages = ["DATA", "PREP", "TRAIN", "EVAL", "DEPLOY"]
+    bw = (w - 60) / 5
+    for i, st in enumerate(stages):
+        bx = x + 30 + i * (bw + 12)
+        rect_round(c, bx, y + h/2 - 16, bw, 32, r=5, fill=BG_PANEL, stroke=GOLD, lw=1)
+        label(c, bx + bw/2, y + h/2, st, font=BODY_B, size=7.5, center=True, color=GOLD_LT)
+        if i < 4:
+            arrow(c, bx + bw, y + h/2, bx + bw + 12, y + h/2)
+    label(c, x + w/2, y + h - 10, "ML PIPELINE", font=BODY_B, size=8, center=True, color=GOLD_LT)
+
+def diag_vision_pipeline(c, x, y, w, h):
+    """Vision pipeline."""
+    stages = ["CAPTURE", "PREPROCESS", "DETECT", "RECOGNIZE"]
+    bw = (w - 60) / 4
+    for i, st in enumerate(stages):
+        bx = x + 30 + i * (bw + 12)
+        rect_round(c, bx, y + h/2 - 16, bw, 32, r=5, fill=BG_PANEL, stroke=GOLD, lw=1)
+        label(c, bx + bw/2, y + h/2, st, font=BODY_B, size=7.5, center=True, color=GOLD_LT)
+        if i < 3:
+            arrow(c, bx + bw, y + h/2, bx + bw + 12, y + h/2)
+    label(c, x + w/2, y + h - 10, "VISION PIPELINE", font=BODY_B, size=8, center=True, color=GOLD_LT)
+
+def diag_nlp_pipeline(c, x, y, w, h):
+    """NLP pipeline."""
+    stages = ["TEXT", "TOKENIZE", "EMBED", "MODEL", "OUTPUT"]
+    bw = (w - 60) / 5
+    for i, st in enumerate(stages):
+        bx = x + 30 + i * (bw + 12)
+        rect_round(c, bx, y + h/2 - 16, bw, 32, r=5, fill=BG_PANEL, stroke=CREDIT, lw=1)
+        label(c, bx + bw/2, y + h/2, st, font=BODY_B, size=7.5, center=True, color=CREDIT)
+        if i < 4:
+            arrow(c, bx + bw, y + h/2, bx + bw + 12, y + h/2, color=CREDIT)
+    label(c, x + w/2, y + h - 10, "NLP PIPELINE", font=BODY_B, size=8, center=True, color=CREDIT)
+
+def diag_ethics(c, x, y, w, h):
+    """Ethics triangle."""
+    p1 = (x + w/2, y + h - 40)
+    p2 = (x + 40, y + 40)
+    p3 = (x + w - 40, y + 40)
+    c.setStrokeColor(GOLD); c.setLineWidth(1.5)
+    c.line(p1[0], p1[1], p2[0], p2[1])
+    c.line(p2[0], p2[1], p3[0], p3[1])
+    c.line(p3[0], p3[1], p1[0], p1[1])
+    label(c, p1[0], p1[1] + 8, "FAIRNESS", font=BODY_B, size=8, center=True, color=GOLD_LT)
+    label(c, p2[0] - 12, p2[1] - 10, "SAFETY", font=BODY_B, size=8, center=True, color=CREDIT)
+    label(c, p3[0] + 4, p3[1] - 10, "ACCOUNTABILITY", font=BODY_B, size=8, center=True, color=GOLD)
+    label(c, x + w/2, y + h - 10, "AI ETHICS PRINCIPLES", font=BODY_B, size=8, center=True, color=GOLD_LT)
+
+def diag_autonomy(c, x, y, w, h):
+    """Levels of autonomy."""
+    levels = ["L0 NO", "L1 ASSIST", "L2 PARTIAL", "L3 COND", "L4 HIGH", "L5 FULL"]
+    bw = (w - 70) / 6
+    for i, st in enumerate(levels):
+        bx = x + 30 + i * (bw + 10)
+        col = GOLD_LT if i >= 4 else (GOLD if i >= 2 else HexColor("#1B253A"))
+        rect_round(c, bx, y + h/2 - 16, bw, 32, r=5, fill=col, stroke=LINE, lw=0.8)
+        label(c, bx + bw/2, y + h/2, st, font=BODY_B, size=6.5, center=True, color=INK)
+    label(c, x + w/2, y + h - 10, "AUTONOMY LEVELS", font=BODY_B, size=8, center=True, color=GOLD_LT)
+
+def diag_rl(c, x, y, w, h):
+    """RL agent-environment loop."""
+    rect_round(c, x + 30, y + h/2 - 20, 70, 40, r=5, fill=BG_PANEL, stroke=GOLD, lw=1)
+    label(c, x + 65, y + h/2 + 2, "AGENT", font=BODY_B, size=8, center=True, color=GOLD_LT)
+    rect_round(c, x + w - 100, y + h/2 - 20, 70, 40, r=5, fill=BG_PANEL, stroke=GOLD, lw=1)
+    label(c, x + w - 65, y + h/2 + 2, "ENVIRONMENT", font=BODY_B, size=7, center=True, color=GOLD_LT)
+    arrow(c, x + 100, y + h/2 + 8, x + w - 100, y + h/2 + 8, color=CREDIT)
+    arrow(c, x + w - 100, y + h/2 - 8, x + 100, y + h/2 - 8, color=GOLD)
+    label(c, x + w/2, y + h/2 + 16, "a (action)", font=BODY, size=7, color=CREDIT)
+    label(c, x + w/2, y + h/2 - 14, "r, s' (reward, state)", font=BODY, size=7, color=GOLD)
+    label(c, x + w/2, y + h - 10, "RL AGENT\u2192ENV LOOP", font=BODY_B, size=8, center=True, color=GOLD_LT)
+
+def diag_cpu(c, x, y, w, h):
+    """CPU pipeline stages."""
+    stages = ["FETCH", "DECODE", "EXEC", "MEM", "WRITE"]
+    bw = (w - 60) / 5
+    for i, st in enumerate(stages):
+        bx = x + 30 + i * (bw + 12)
+        rect_round(c, bx, y + h/2 - 16, bw, 32, r=5, fill=BG_PANEL, stroke=CREDIT, lw=1)
+        label(c, bx + bw/2, y + h/2, st, font=BODY_B, size=7, center=True, color=CREDIT)
+        if i < 4:
+            arrow(c, bx + bw, y + h/2, bx + bw + 12, y + h/2, color=CREDIT)
+    label(c, x + w/2, y + h - 10, "CPU INSTRUCTION PIPELINE", font=BODY_B, size=8, center=True, color=GOLD_LT)
+
+def diag_diff_drive(c, x, y, w, h):
+    """Differential drive."""
+    c.setStrokeColor(GOLD); c.setLineWidth(2)
+    c.circle(x + w/2, y + h/2, 34, stroke=1, fill=0)
+    c.setFillColor(GOLD)
+    c.circle(x + w/2 - 24, y + h/2, 10, stroke=0, fill=1)   # left wheel
+    c.circle(x + w/2 + 24, y + h/2, 10, stroke=0, fill=1)   # right wheel
+    arrow(c, x + w/2, y + h/2 - 34, x + w/2, y + h/2 - 50, color=CREDIT)
+    label(c, x + w/2, y + h/2 - 56, "v", font=BODY_B, size=9, center=True, color=CREDIT)
+    label(c, x + w/2, y + h - 10, "DIFFERENTIAL DRIVE", font=BODY_B, size=8, center=True, color=GOLD_LT)
+
+def diag_vr(c, x, y, w, h):
+    """VR pipeline."""
+    stages = ["TRACK", "RENDER", "DISPLAY"]
+    bw = (w - 50) / 3
+    for i, st in enumerate(stages):
+        bx = x + 25 + i * (bw + 12)
+        rect_round(c, bx, y + h/2 - 16, bw, 32, r=5, fill=BG_PANEL, stroke=CREDIT, lw=1)
+        label(c, bx + bw/2, y + h/2, st, font=BODY_B, size=7.5, center=True, color=CREDIT)
+        if i < 2:
+            arrow(c, bx + bw, y + h/2, bx + bw + 12, y + h/2, color=CREDIT)
+    label(c, x + w/2, y + h - 10, "VR RENDERING PIPELINE", font=BODY_B, size=8, center=True, color=GOLD_LT)
+
+def diag_cps(c, x, y, w, h):
+    """CPS layers."""
+    layers = [
+        (y + h - 30, "CYBER (APP)", GOLD_LT),
+        (y + h - 72, "NETWORK", CREDIT),
+        (y + h - 114, "CONTROL", GOLD),
+        (y + h - 156, "PHYSICAL", HexColor("#1B253A")),
+    ]
+    for yy, nm, col in layers:
+        rect_round(c, x + 20, yy - 18, w - 40, 28, r=5, fill=col, stroke=LINE, lw=0.8)
+        label(c, x + w/2, yy - 5, nm, font=BODY_B, size=7.5, center=True, color=INK)
+    label(c, x + w/2, y + h - 10, "CYBER-PHYSICAL LAYERS", font=BODY_B, size=8, center=True, color=GOLD_LT)
+
+def diag_swarm(c, x, y, w, h):
+    """Swarm behaviors."""
+    import math
+    cx = x + w/2; cy = y + h/2
+    for i in range(8):
+        ang = i * 2 * math.pi / 8
+        px = cx + 40 * cos(ang); py = cy + 40 * sin(ang)
+        c.setFillColor(GOLD_LT)
+        c.circle(px, py, 5, stroke=1, fill=1)
+        c.setStrokeColor(GOLD); c.setLineWidth(0.8)
+        c.line(cx, cy, px, py)
+    label(c, cx, cy - 2, "SWARM", font=BODY_B, size=8, center=True, color=GOLD_LT)
+    label(c, x + w/2, y + h - 10, "SWARM BEHAVIORS", font=BODY_B, size=8, center=True, color=GOLD_LT)
+
+def diag_cognitive(c, x, y, w, h):
+    """Cognitive architecture."""
+    rect_round(c, x + 20, y + h/2 - 16, w - 40, 32, r=5, fill=BG_PANEL, stroke=GOLD, lw=1)
+    label(c, x + w/2, y + h/2, "PERCEIVE  \u2192  REASON  \u2192  ACT  \u2192  LEARN", font=BODY_B, size=8, center=True, color=GOLD_LT)
+    label(c, x + w/2, y + h - 10, "COGNITIVE ARCHITECTURE", font=BODY_B, size=8, center=True, color=GOLD_LT)
+
+def diag_bio(c, x, y, w, h):
+    """Bio-inspired locomotion."""
+    import math
+    cx = x + w/2; cy = y + h/2
+    # leg segments
+    c.setStrokeColor(GOLD); c.setLineWidth(3)
+    c.line(cx - 30, cy, cx, cy + 30)
+    c.line(cx, cy + 30, cx + 30, cy + 10)
+    c.setFillColor(GOLD)
+    c.circle(cx - 30, cy, 5, stroke=0, fill=1)
+    c.circle(cx, cy + 30, 5, stroke=0, fill=1)
+    c.circle(cx + 30, cy + 10, 5, stroke=0, fill=1)
+    label(c, cx + w/4, y + h - 10, "BIO-INSPIRED LOCOMOTION", font=BODY_B, size=8, center=True, color=GOLD_LT)
+
+def diag_adaptive(c, x, y, w, h):
+    """Adaptive control loop."""
+    rect_round(c, x + w/2 - 35, y + h/2 - 20, 70, 40, r=5, fill=BG_PANEL, stroke=CREDIT, lw=1)
+    label(c, x + w/2, y + h/2 + 2, "ADAPTIVE", font=BODY_B, size=8, center=True, color=CREDIT)
+    label(c, x + w/2, y + h/2 - 8, "CONTROLLER", font=BODY, size=7, center=True, color=CREDIT)
+    arrow(c, x + 20, y + h/2, x + w/2 - 35, y + h/2)
+    arrow(c, x + w/2 + 35, y + h/2, x + w - 20, y + h/2)
+    label(c, x + w/2, y + h - 10, "ADAPTIVE CONTROL", font=BODY_B, size=8, center=True, color=GOLD_LT)
+
+def diag_multi_robot(c, x, y, w, h):
+    """Multi-robot task allocation."""
+    import math
+    cx = x + w/2; cy = y + h/2
+    for i in range(6):
+        ang = i * 2 * math.pi / 6
+        px = cx + 34 * cos(ang); py = cy + 34 * sin(ang)
+        c.setFillColor(GOLD_LT)
+        c.circle(px, py, 5, stroke=1, fill=1)
+        c.setStrokeColor(GOLD); c.setLineWidth(0.8)
+        c.line(cx, cy, px, py)
+    label(c, cx, cy - 2, "TEAM", font=BODY_B, size=8, center=True, color=GOLD_LT)
+    label(c, x + w/2, y + h - 10, "MULTI-ROBOT ALLOCATION", font=BODY_B, size=8, center=True, color=GOLD_LT)
+
+def diag_ekf(c, x, y, w, h):
+    """EKF localization."""
+    c.setStrokeColor(GOLD); c.setLineWidth(1.5)
+    c.circle(x + w/2, y + h/2, 30, stroke=1, fill=0)
+    c.setFillColor(GOLD)
+    c.circle(x + w/2, y + h/2, 4, stroke=0, fill=1)
+    for i in range(4):
+        ang = i * 90 * 3.14159 / 180
+        lx = x + w/2 + 45 * cos(ang); ly = y + h/2 + 45 * sin(ang)
+        c.setFillColor(CREDIT)
+        c.circle(lx, ly, 4, stroke=0, fill=1)
+        c.setStrokeColor(CREDIT); c.setLineWidth(1)
+        c.line(x + w/2, y + h/2, lx, ly)
+    label(c, x + w/2, y + h - 10, "EKF LOCALIZATION", font=BODY_B, size=8, center=True, color=GOLD_LT)
+
+def diag_task_motion(c, x, y, w, h):
+    """Task & motion planning hierarchy."""
+    rect_round(c, x + w/2 - 40, y + h - 50, 80, 30, r=5, fill=GOLD_DK)
+    label(c, x + w/2, y + h - 36, "TASK PLAN", font=BODY_B, size=8, center=True, color=INK)
+    for i in range(3):
+        bx = x + 30 + i * (w - 60) / 3
+        rect_round(c, bx, y + 30, (w - 60) / 3 - 10, 26, r=5, fill=BG_PANEL, stroke=GOLD, lw=1)
+        label(c, bx + (w - 60) / 6 - 5, y + 42, f"MOTION {i+1}", font=BODY, size=7, center=True, color=GOLD_LT)
+        arrow(c, x + w/2, y + h - 50, bx + (w - 60) / 6 - 5, y + 56, color=GOLD_LT)
+    label(c, x + w/2, y + h - 10, "TASK\u2192MOTION HIERARCHY", font=BODY_B, size=8, center=True, color=GOLD_LT)
+
+def diag_social(c, x, y, w, h):
+    """Social HRI."""
+    c.setFillColor(GOLD_LT)
+    c.circle(x + 80, y + h/2, 14, stroke=1, fill=1)
+    c.setFillColor(GOLD)
+    c.circle(x + w - 80, y + h/2, 14, stroke=1, fill=1)
+    arrow(c, x + 94, y + h/2 + 6, x + w - 94, y + h/2 + 6, color=CREDIT)
+    arrow(c, x + w - 94, y + h/2 - 6, x + 94, y + h/2 - 6, color=GOLD)
+    label(c, x + 80, y + h/2 - 22, "HUMAN", font=BODY_B, size=7, center=True, color=GOLD_LT)
+    label(c, x + w - 80, y + h/2 - 22, "ROBOT", font=BODY_B, size=7, center=True, color=GOLD)
+    label(c, x + w/2, y + h - 10, "HUMAN\u2192ROBOT INTERACTION", font=BODY_B, size=8, center=True, color=GOLD_LT)
+
+def diag_evolutionary(c, x, y, w, h):
+    """Evolutionary cycle."""
+    import math
+    cx = x + w/2; cy = y + h/2
+    stages = ["SELECT", "CROSSOVER", "MUTATE", "EVALUATE"]
+    for i, st in enumerate(stages):
+        ang = i * 90 * 3.14159 / 180 - 45 * 3.14159 / 180
+        px = cx + 44 * cos(ang); py = cy + 44 * sin(ang)
+        rect_round(c, px - 22, py - 10, 44, 20, r=4, fill=BG_PANEL, stroke=GOLD, lw=1)
+        label(c, px, py - 2, st, font=BODY_B, size=7, center=True, color=GOLD_LT)
+    label(c, cx, cy - 2, "EVOLVE", font=BODY_B, size=8, center=True, color=CREDIT)
+    label(c, x + w/2, y + h - 10, "EVOLUTIONARY CYCLE", font=BODY_B, size=8, center=True, color=GOLD_LT)
+
+def diag_responsibility(c, x, y, w, h):
+    """Responsibility chain."""
+    links = ["DESIGNER", "MANUFACTURER", "USER", "REGULATOR"]
+    bw = (w - 70) / 4
+    for i, st in enumerate(links):
+        bx = x + 30 + i * (bw + 10)
+        rect_round(c, bx, y + h/2 - 14, bw, 28, r=5, fill=BG_PANEL, stroke=GOLD, lw=1)
+        label(c, bx + bw/2, y + h/2, st, font=BODY_B, size=7, center=True, color=GOLD_LT)
+        if i < 3:
+            arrow(c, bx + bw, y + h/2, bx + bw + 10, y + h/2)
+    label(c, x + w/2, y + h - 10, "RESPONSIBILITY CHAIN", font=BODY_B, size=8, center=True, color=GOLD_LT)
+
+def diag_robot_learning(c, x, y, w, h):
+    """Robot learning loop."""
+    rect_round(c, x + 30, y + h/2 - 20, 70, 40, r=5, fill=BG_PANEL, stroke=GOLD, lw=1)
+    label(c, x + 65, y + h/2 + 2, "DEMO", font=BODY_B, size=8, center=True, color=GOLD_LT)
+    rect_round(c, x + w - 100, y + h/2 - 20, 70, 40, r=5, fill=BG_PANEL, stroke=CREDIT, lw=1)
+    label(c, x + w - 65, y + h/2 + 2, "SKILL", font=BODY_B, size=8, center=True, color=CREDIT)
+    arrow(c, x + 100, y + h/2, x + w - 100, y + h/2, color=GOLD_LT)
+    label(c, x + w/2, y + h - 10, "IMITATION LEARNING", font=BODY_B, size=8, center=True, color=GOLD_LT)
+
+def diag_explain(c, x, y, w, h):
+    """Explainability."""
+    rect_round(c, x + 30, y + h/2 - 20, 70, 40, r=5, fill=HexColor("#1B253A"), stroke=GOLD_DK, lw=1)
+    label(c, x + 65, y + h/2, "BLACK BOX", font=BODY_B, size=8, center=True, color=MUTED)
+    rect_round(c, x + w - 100, y + h/2 - 20, 70, 40, r=5, fill=BG_PANEL, stroke=GOLD, lw=1)
+    label(c, x + w - 65, y + h/2 + 2, "XAI", font=BODY_B, size=9, center=True, color=GOLD_LT)
+    label(c, x + w - 65, y + h/2 - 8, "(WHY)", font=BODY, size=6.5, center=True, color=GOLD)
+    arrow(c, x + 100, y + h/2, x + w - 100, y + h/2, color=GOLD)
+    label(c, x + w/2, y + h - 10, "EXPLAINABLE AI", font=BODY_B, size=8, center=True, color=GOLD_LT)
+
+def diag_grasp(c, x, y, w, h):
+    """Grasp taxonomy."""
+    c.setStrokeColor(GOLD); c.setLineWidth(2)
+    c.circle(x + 60, y + h/2, 12, stroke=1, fill=0)
+    c.setStrokeColor(CREDIT); c.setLineWidth(2)
+    c.circle(x + w - 60, y + h/2, 12, stroke=1, fill=0)
+    label(c, x + 60, y + h/2 - 16, "POWER", font=BODY_B, size=7, center=True, color=GOLD)
+    label(c, x + w - 60, y + h/2 - 16, "PRECISION", font=BODY_B, size=7, center=True, color=CREDIT)
+    c.setFillColor(GOLD)
+    c.circle(x + 60, y + h/2, 3, stroke=0, fill=1)
+    c.setFillColor(CREDIT)
+    c.circle(x + w - 60, y + h/2, 3, stroke=0, fill=1)
+    label(c, x + w/2, y + h - 10, "GRASP TAXONOMY", font=BODY_B, size=8, center=True, color=GOLD_LT)
+
+def diag_multimodal(c, x, y, w, h):
+    """Multimodal perception."""
+    senses = ["VISION", "LIDAR", "TACTILE", "AUDIO"]
+    import math
+    cx = x + w/2; cy = y + h/2
+    for i, st in enumerate(senses):
+        ang = i * 90 * 3.14159 / 180
+        px = cx + 38 * cos(ang); py = cy + 38 * sin(ang)
+        rect_round(c, px - 18, py - 10, 36, 20, r=4, fill=BG_PANEL, stroke=GOLD, lw=1)
+        label(c, px, py - 2, st, font=BODY_B, size=7, center=True, color=GOLD_LT)
+        c.setStrokeColor(GOLD); c.setLineWidth(1)
+        c.line(cx, cy, px, py)
+    label(c, cx, cy - 2, "FUSE", font=BODY_B, size=8, center=True, color=CREDIT)
+    label(c, x + w/2, y + h - 10, "MULTIMODAL PERCEPTION", font=BODY_B, size=8, center=True, color=GOLD_LT)
+
+def diag_nav(c, x, y, w, h):
+    """Navigation stack."""
+    layers = ["GLOBAL PLANNER", "LOCAL PLANNER", "CONTROLLER", "RECOVERY"]
+    bh = (h - 60) / 4
+    for i, st in enumerate(layers):
+        by = y + 30 + i * bh
+        rect_round(c, x + 20, by, w - 40, bh - 12, r=5, fill=BG_PANEL, stroke=GOLD, lw=1)
+        label(c, x + w/2, by + (bh - 12) / 2 - 2, st, font=BODY_B, size=7.5, center=True, color=GOLD_LT)
+    label(c, x + w/2, y + h - 10, "NAVIGATION STACK", font=BODY_B, size=8, center=True, color=GOLD_LT)
+
+def diag_cspace(c, x, y, w, h):
+    """Configuration space."""
+    c.setFillColor(HexColor("#1B253A"))
+    c.rect(x + 40, y + 40, w - 80, h - 80, stroke=0, fill=1)
+    c.setStrokeColor(GOLD); c.setLineWidth(1.5)
+    c.line(x + 60, y + h - 60, x + w - 60, y + 60)
+    c.setFillColor(GOLD)
+    c.circle(x + 70, y + h - 70, 4, stroke=0, fill=1)
+    c.circle(x + w - 70, y + 70, 4, stroke=0, fill=1)
+    label(c, x + w/2, y + h - 10, "CONFIGURATION SPACE", font=BODY_B, size=8, center=True, color=GOLD_LT)
+
+def diag_sim(c, x, y, w, h):
+    """Sim-to-real pipeline."""
+    stages = ["SIM", "RANDOMIZE", "TRANSFER", "REAL"]
+    bw = (w - 60) / 4
+    for i, st in enumerate(stages):
+        bx = x + 30 + i * (bw + 12)
+        col = GOLD_LT if i == 0 else (CREDIT if i == 3 else GOLD)
+        rect_round(c, bx, y + h/2 - 16, bw, 32, r=5, fill=col, stroke=LINE, lw=0.8)
+        label(c, bx + bw/2, y + h/2, st, font=BODY_B, size=7.5, center=True, color=INK)
+        if i < 3:
+            arrow(c, bx + bw, y + h/2, bx + bw + 12, y + h/2)
+    label(c, x + w/2, y + h - 10, "SIM-TO-REAL", font=BODY_B, size=8, center=True, color=GOLD_LT)
+
+def diag_vis_servo(c, x, y, w, h):
+    """Visual servoing."""
+    c.setFillColor(GOLD_LT)
+    c.circle(x + 70, y + h/2, 10, stroke=1, fill=1)
+    c.setFillColor(GOLD)
+    c.circle(x + w - 70, y + h/2, 10, stroke=1, fill=1)
+    arrow(c, x + 80, y + h/2, x + w - 80, y + h/2, color=CREDIT)
+    label(c, x + 70, y + h/2 - 18, "CAMERA", font=BODY_B, size=7, center=True, color=GOLD_LT)
+    label(c, x + w - 70, y + h/2 - 18, "TARGET", font=BODY_B, size=7, center=True, color=GOLD)
+    label(c, x + w/2, y + h - 10, "VISUAL SERVOING", font=BODY_B, size=8, center=True, color=GOLD_LT)
+
+def diag_design(c, x, y, w, h):
+    """Robot design process."""
+    stages = ["REQ", "CONCEPT", "PROTO", "TEST"]
+    bw = (w - 60) / 4
+    for i, st in enumerate(stages):
+        bx = x + 30 + i * (bw + 12)
+        rect_round(c, bx, y + h/2 - 16, bw, 32, r=5, fill=BG_PANEL, stroke=CREDIT, lw=1)
+        label(c, bx + bw/2, y + h/2, st, font=BODY_B, size=7.5, center=True, color=CREDIT)
+        if i < 3:
+            arrow(c, bx + bw, y + h/2, bx + bw + 12, y + h/2, color=CREDIT)
+    label(c, x + w/2, y + h - 10, "ROBOT DESIGN PROCESS", font=BODY_B, size=8, center=True, color=GOLD_LT)
+
+def diag_capstone(c, x, y, w, h):
+    """Capstone lifecycle."""
+    stages = ["DEFINE", "DESIGN", "BUILD", "TEST", "DEMO"]
+    bw = (w - 70) / 5
+    for i, st in enumerate(stages):
+        bx = x + 30 + i * (bw + 10)
+        rect_round(c, bx, y + h/2 - 16, bw, 32, r=5, fill=BG_PANEL, stroke=GOLD, lw=1)
+        label(c, bx + bw/2, y + h/2, st, font=BODY_B, size=7, center=True, color=GOLD_LT)
+        if i < 4:
+            arrow(c, bx + bw, y + h/2, bx + bw + 10, y + h/2)
+    label(c, x + w/2, y + h - 10, "CAPSTONE LIFECYCLE", font=BODY_B, size=8, center=True, color=GOLD_LT)
+
+# ----------------------------------------------------------------------------
+# Course -> image & diagram mapping
+# ----------------------------------------------------------------------------
+COVER_IMAGE = {
+    "AI.101": "hero_ai_robotics",
+    "AI.102": "hero_ai_robotics",
+    "AI.103": "ml_neural",
+    "AI.104": "computer_vision",
+    "AI.105": "nlp_language",
+    "AI.106": "control_systems",
+    "AI.107": "hero_ai_robotics",
+    "AI.108": "control_systems",
+    "AI.109": "embedded_iot",
+    "AI.110": "autonomous_robot",
+    "AI.111": "ml_neural",
+    "AI.112": "hero_ai_robotics",
+    "AI.201": "embedded_iot",
+    "AI.202": "computer_vision",
+    "AI.203": "ethics_ai",
+    "AI.204": "autonomous_robot",
+    "AI.205": "ml_neural",
+    "AI.206": "embedded_iot",
+    "AI.207": "autonomous_robot",
+    "AI.208": "hero_ai_robotics",
+    "AI.209": "control_systems",
+    "AI.210": "ml_neural",
+    "AI.211": "computer_vision",
+    "AI.212": "kinematics_manipulation",
+    "AI.301": "vr_cps",
+    "AI.302": "vr_cps",
+    "AI.303": "swarm_robotics",
+    "AI.304": "hero_ai_robotics",
+    "AI.305": "ml_neural",
+    "AI.306": "autonomous_robot",
+    "AI.307": "computer_vision",
+    "AI.308": "control_systems",
+    "AI.309": "swarm_robotics",
+    "AI.310": "autonomous_robot",
+    "AI.311": "autonomous_robot",
+    "AI.312": "autonomous_robot",
+    "AI.401": "ml_neural",
+    "AI.402": "ethics_ai",
+    "AI.403": "ml_neural",
+    "AI.404": "ethics_ai",
+    "AI.405": "kinematics_manipulation",
+    "AI.406": "computer_vision",
+    "AI.407": "autonomous_robot",
+    "AI.408": "autonomous_robot",
+    "AI.409": "hero_ai_robotics",
+    "AI.410": "computer_vision",
+    "AI.411": "kinematics_manipulation",
+    "AI.450": "hero_ai_robotics",
+}
+
+# Diagram key: (course_code, session_num) -> diagram function name
+SESSION_DIAGRAMS = {
+    "AI.101": {2: "diag_peas", 3: "diag_loss"},
+    "AI.102": {1: "diag_sense_plan_act", 2: "diag_diff_drive"},
+    "AI.103": {1: "diag_ml_pipeline", 2: "diag_neural"},
+    "AI.104": {1: "diag_vision_pipeline", 2: "diag_neural"},
+    "AI.105": {1: "diag_nlp_pipeline", 2: "diag_neural"},
+    "AI.106": {4: "diag_control_block", 5: "diag_pid"},
+    "AI.107": {2: "diag_big_o", 4: "diag_iot"},
+    "AI.108": {4: "diag_control_block", 5: "diag_loss"},
+    "AI.109": {2: "diag_cpu", 4: "diag_iot"},
+    "AI.110": {2: "diag_social", 4: "diag_ethics"},
+    "AI.111": {2: "diag_neural", 3: "diag_loss"},
+    "AI.112": {1: "diag_vr", 3: "diag_kinematic"},
+    "AI.201": {1: "diag_iot", 3: "diag_iot"},
+    "AI.202": {1: "diag_vision_pipeline", 4: "diag_kalman"},
+    "AI.203": {1: "diag_ethics", 2: "diag_ethics"},
+    "AI.204": {1: "diag_autonomy", 2: "diag_sense_plan_act"},
+    "AI.205": {1: "diag_rl", 4: "diag_loss"},
+    "AI.206": {2: "diag_cpu", 3: "diag_iot"},
+    "AI.207": {2: "diag_diff_drive", 4: "diag_nav"},
+    "AI.208": {1: "diag_sense_plan_act", 3: "diag_sim"},
+    "AI.209": {2: "diag_fuzzy", 4: "diag_control_block"},
+    "AI.210": {2: "diag_neural", 4: "diag_neural"},
+    "AI.211": {1: "diag_neural", 5: "diag_loss"},
+    "AI.212": {2: "diag_kinematic", 3: "diag_kinematic", 5: "diag_jacobian" if False else "diag_kinematic"},
+    "AI.301": {1: "diag_vr", 4: "diag_vr"},
+    "AI.302": {1: "diag_cps", 3: "diag_iot"},
+    "AI.303": {2: "diag_swarm", 3: "diag_swarm"},
+    "AI.304": {2: "diag_ros", 3: "diag_ros"},
+    "AI.305": {1: "diag_cognitive", 4: "diag_cognitive"},
+    "AI.306": {2: "diag_bio", 4: "diag_bio"},
+    "AI.307": {2: "diag_vision_pipeline", 3: "diag_kalman"},
+    "AI.308": {2: "diag_adaptive", 3: "diag_control_block"},
+    "AI.309": {3: "diag_multi_robot", 5: "diag_multi_robot"},
+    "AI.310": {2: "diag_ekf", 4: "diag_slam"},
+    "AI.311": {1: "diag_task_motion", 3: "diag_rrt"},
+    "AI.312": {2: "diag_social", 3: "diag_social"},
+    "AI.401": {1: "diag_evolutionary", 5: "diag_evolutionary"},
+    "AI.402": {1: "diag_ethics", 2: "diag_responsibility"},
+    "AI.403": {1: "diag_robot_learning", 3: "diag_sim"},
+    "AI.404": {3: "diag_explain", 4: "diag_ethics"},
+    "AI.405": {3: "diag_grasp", 4: "diag_grasp"},
+    "AI.406": {1: "diag_multimodal", 3: "diag_multimodal"},
+    "AI.407": {4: "diag_nav", 3: "diag_rrt"},
+    "AI.408": {2: "diag_cspace", 3: "diag_rrt"},
+    "AI.409": {2: "diag_sim", 4: "diag_sim"},
+    "AI.410": {2: "diag_vis_servo", 1: "diag_vision_pipeline"},
+    "AI.411": {1: "diag_design", 2: "diag_design"},
+    "AI.450": {1: "diag_capstone", 6: "diag_capstone"},
+}
+
+DIAGRAM_FUNCS = {
+    "diag_peas": diag_peas,
+    "diag_neural": diag_neural,
+    "diag_pid": diag_pid,
+    "diag_kalman": diag_kalman,
+    "diag_slam": diag_slam,
+    "diag_rrt": diag_rrt,
+    "diag_ros": diag_ros,
+    "diag_fuzzy": diag_fuzzy,
+    "diag_loss": diag_loss,
+    "diag_kinematic": diag_kinematic,
+    "diag_big_o": diag_big_o,
+    "diag_iot": diag_iot,
+    "diag_control_block": diag_control_block,
+    "diag_sense_plan_act": diag_sense_plan_act,
+    "diag_ml_pipeline": diag_ml_pipeline,
+    "diag_vision_pipeline": diag_vision_pipeline,
+    "diag_nlp_pipeline": diag_nlp_pipeline,
+    "diag_ethics": diag_ethics,
+    "diag_autonomy": diag_autonomy,
+    "diag_rl": diag_rl,
+    "diag_cpu": diag_cpu,
+    "diag_diff_drive": diag_diff_drive,
+    "diag_vr": diag_vr,
+    "diag_cps": diag_cps,
+    "diag_swarm": diag_swarm,
+    "diag_cognitive": diag_cognitive,
+    "diag_bio": diag_bio,
+    "diag_adaptive": diag_adaptive,
+    "diag_multi_robot": diag_multi_robot,
+    "diag_ekf": diag_ekf,
+    "diag_task_motion": diag_task_motion,
+    "diag_social": diag_social,
+    "diag_evolutionary": diag_evolutionary,
+    "diag_responsibility": diag_responsibility,
+    "diag_robot_learning": diag_robot_learning,
+    "diag_explain": diag_explain,
+    "diag_grasp": diag_grasp,
+    "diag_multimodal": diag_multimodal,
+    "diag_nav": diag_nav,
+    "diag_cspace": diag_cspace,
+    "diag_sim": diag_sim,
+    "diag_vis_servo": diag_vis_servo,
+    "diag_design": diag_design,
+    "diag_capstone": diag_capstone,
+}
+
+# ----------------------------------------------------------------------------
+# Cover slide (with image)
 # ----------------------------------------------------------------------------
 def draw_cover(c, course):
     gradient_bg(c, HexColor("#0E1426"), HexColor("#0A0E1A"))
-    # Cinematic spotlight
     spotlight(c, W * 0.5, H * 0.62, W * 0.9)
     spotlight(c, W * 0.18, H * 0.85, W * 0.45)
-    # Subtle horizon line
     c.setStrokeColor(Color(1, 0.78, 0.3, alpha=0.18))
     c.setLineWidth(1.2)
     c.line(M, H * 0.52, W - M, H * 0.52)
 
-    # University wordmark (top)
+    # University wordmark
     c.setFont(DISPLAY, 13)
     c.setFillColor(GOLD_LT)
     c.drawCentredString(W / 2, H - 78, UNIVERSITY.upper())
@@ -183,18 +996,17 @@ def draw_cover(c, course):
     c.setFillColor(MUTED)
     c.drawCentredString(W / 2, H - 94, "Bachelor of Artificial Intelligence and Robotics Engineering")
 
-    # Gold divider
     c.setStrokeColor(GOLD)
     c.setLineWidth(2.2)
     c.line(W / 2 - 90, H - 112, W / 2 + 90, H - 112)
 
-    # Course code — big, gold
+    # Course code
     c.setFont(DISPLAY, 44)
     c.setFillColor(GOLD)
     c.drawCentredString(W / 2, H - 176, course["code"])
 
-    # Title — large serif
-    for i, ln in enumerate(wrap(course["title"], DISPLAY_R, 23, W - 120)):
+    # Title
+    for i, ln in enumerate(wrap(course["title"], DISPLAY_R, 23, W - 260)):
         c.setFont(DISPLAY_R, 23)
         c.setFillColor(INK)
         c.drawCentredString(W / 2, H - 218 - i * 40, ln)
@@ -208,7 +1020,7 @@ def draw_cover(c, course):
     c.drawCentredString(W / 2, by + band_h / 2 - 7, course["semester"].upper())
 
     # 6-hour callout
-    c.setFont(DISPLAY_B if False else DISPLAY, 16)
+    c.setFont(DISPLAY, 16)
     c.setFillColor(GOLD_LT)
     c.drawCentredString(W / 2, H - 372, "ORIENTATION LECTURE  •  6 CONTACT HOURS")
 
@@ -216,27 +1028,41 @@ def draw_cover(c, course):
     c.setFillColor(MUTED)
     c.drawCentredString(W / 2, H - 390, f"Credit: {course['credits']}   |   Orientation · Foundation Module")
 
-    # Description panel (lower)
+    # Hero image on right side of cover
+    img_key = COVER_IMAGE.get(course["code"], "hero_ai_robotics")
+    img_path = os.path.join(ASSET_DIR, f"{img_key}.png")
+    if os.path.exists(img_path):
+        ix = W - M - 300
+        iy = 130
+        iw = 280
+        ih = 200
+        # subtle panel behind image
+        rect_round(c, ix - 10, iy - 10, iw + 20, ih + 20, r=12, fill=BG_PANEL, stroke=LINE, lw=0.8)
+        draw_image(c, img_path, ix, iy, iw, ih)
+        c.setFont(BODY, 7.5)
+        c.setFillColor(MUTED)
+        c.drawCentredString(ix + iw / 2, iy - 14, "ILLUSTRATIVE HERO IMAGERY")
+
+    # Description panel (lower left)
     py = 150
-    rect_round(c, M, py, W - 2 * M, 110, r=10, fill=BG_PANEL, stroke=LINE, lw=0.8)
+    rect_round(c, M, py, W - 2 * M - 320, 110, r=10, fill=BG_PANEL, stroke=LINE, lw=0.8)
     c.setFont(DISPLAY_R, 11.5)
     c.setFillColor(INK)
     c.drawString(M + 28, py + 86, "COURSE OVERVIEW")
     c.setStrokeColor(GOLD); c.setLineWidth(1)
     c.line(M + 28, py + 80, M + 150, py + 80)
     dy = py + 56
-    for ln in wrap(course["description"], BODY, 11.5, W - 2 * M - 56):
+    for ln in wrap(course["description"], BODY, 11.5, W - 2 * M - 350):
         c.setFont(BODY, 11.5)
         c.setFillColor(MUTED)
         c.drawString(M + 28, dy, ln)
         dy -= 17
 
-    # Footer
     footer(c, 1, course["code"], course["title"])
     c.showPage()
 
 # ----------------------------------------------------------------------------
-# Content slide
+# Content slide (with optional diagram)
 # ----------------------------------------------------------------------------
 def draw_content(c, page, course, session):
     gradient_bg(c, HexColor("#0E1426"), HexColor("#0A0E1A"))
@@ -244,7 +1070,6 @@ def draw_content(c, page, course, session):
 
     # Left column: session identity
     lx = M
-    # Session chip
     chip_w, chip_h = 78, 78
     rect_round(c, lx, H - 130 - chip_h, chip_w, chip_h, r=10, fill=BG_PANEL, stroke=GOLD, lw=1.2)
     c.setFont(DISPLAY, 24)
@@ -254,16 +1079,14 @@ def draw_content(c, page, course, session):
     c.setFillColor(MUTED)
     c.drawCentredString(lx + chip_w / 2, H - 130 - chip_h / 2 - 24, "SESSION")
 
-    # Time chip
     tw, th = 150, 36
     tx = lx
     ty = H - 130 - chip_h - th - 14
     rect_round(c, tx, ty, tw, th, r=6, fill=GOLD_DK)
     c.setFont(BODY_B, 11.5)
     c.setFillColor(INK)
-    c.drawCentredString(tx + tw / 2, ty + th / 2 - 7, f"⏱  {session['minutes']} MINUTES")
+    c.drawCentredString(tx + tw / 2, ty + th / 2 - 7, f"\u23F1  {session['minutes']} MINUTES")
 
-    # Session title
     sy = ty - 34
     c.setFont(DISPLAY_R, 15.5)
     c.setFillColor(GOLD_LT)
@@ -271,7 +1094,6 @@ def draw_content(c, page, course, session):
     c.setStrokeColor(LINE); c.setLineWidth(0.8)
     c.line(lx, sy - 8, lx + 300, sy - 8)
 
-    # Topics
     ty2 = sy - 46
     c.setFont(BODY_B, 10)
     c.setFillColor(MUTED)
@@ -279,7 +1101,7 @@ def draw_content(c, page, course, session):
     yy = ty2 - 24
     max_w = 330
     for top in session["topics"]:
-        lines = wrap("• " + top, BODY, 11, max_w)
+        lines = wrap("\u2022 " + top, BODY, 11, max_w)
         c.setFont(BODY, 11)
         c.setFillColor(INK)
         c.drawString(lx, yy, lines[0])
@@ -289,7 +1111,23 @@ def draw_content(c, page, course, session):
             c.setFillColor(MUTED)
             c.drawString(lx + 18, yy, extra)
             yy -= 14
-        yy -= 9  # gap between topics
+        yy -= 9
+
+    # Diagram slot below topics on left (if space)
+    diag_key = SESSION_DIAGRAMS.get(course["code"], {}).get(session["num"])
+    if diag_key and diag_key in DIAGRAM_FUNCS:
+        dy = yy - 16
+        dx = lx
+        dw = 330
+        dh = min(150, dy - 90)
+        if dh > 60:
+            rect_round(c, dx, 92, dw, dh, r=8, fill=BG_PANEL, stroke=LINE, lw=0.8)
+            c.setFont(BODY_B, 9)
+            c.setFillColor(GOLD_LT)
+            c.drawString(dx + 12, 92 + dh - 18, "CONCEPT DIAGRAM")
+            c.setStrokeColor(GOLD); c.setLineWidth(0.8)
+            c.line(dx + 12, 92 + dh - 24, dx + 120, 92 + dh - 24)
+            DIAGRAM_FUNCS[diag_key](c, dx + 14, 94, dw - 28, dh - 40)
 
     # Right panel: Teaching focus & takeaway
     px = W - M - 360
@@ -297,7 +1135,6 @@ def draw_content(c, page, course, session):
     ph = H - 150 - 90
     py2 = 90
     rect_round(c, px, py2, pw, ph, r=12, fill=BG_PANEL, stroke=LINE, lw=0.8)
-    # inner gold top edge
     c.setStrokeColor(GOLD); c.setLineWidth(1)
     c.line(px + 16, py2 + ph - 22, px + pw - 16, py2 + ph - 22)
     c.setFont(BODY_B, 11.5)
@@ -310,12 +1147,11 @@ def draw_content(c, page, course, session):
         c.drawString(px + 24, fy, ln)
         fy -= 15
 
-    # Takeaway strip
     tyaw = py2 - 46
     rect_round(c, px, tyaw, pw, 34, r=6, fill=GOLD_DK)
     c.setFont(BODY_B, 10)
     c.setFillColor(INK)
-    c.drawString(px + 16, tyaw + 10, "▲  KEY TAKEAWAY")
+    c.drawString(px + 16, tyaw + 10, "\u25B2  KEY TAKEAWAY")
     c.setFont(BODY, 9.5)
     c.setFillColor(GOLD_LT)
     c.drawString(px + 160, tyaw + 10, session["takeaway"][:60])
@@ -328,31 +1164,24 @@ def draw_content(c, page, course, session):
 # ----------------------------------------------------------------------------
 def build_course(course, out_path):
     c = canvas.Canvas(out_path, pagesize=(W, H))
-    c.setTitle(f"{course['code']} — {course['title']}")
+    c.setTitle(f"{course['code']} \u2014 {course['title']}")
     c.setAuthor(UNIVERSITY)
-    c.setSubject("Orientation Lecture — 6 Hours")
+    c.setSubject("Orientation Lecture \u2014 6 Hours")
 
-    draw_cover(c, course)                       # page 1
+    draw_cover(c, course)
     page = 2
     for session in course["sessions"]:
-        draw_content(c, page, course, session)  # one slide per session
+        draw_content(c, page, course, session)
         page += 1
     c.save()
-    return page - 1  # total slides
+    return page - 1
 
 # ----------------------------------------------------------------------------
-# Course data — 43 subjects (42 courses + 1 project)
-# Each session: ~60 minutes, 6 sessions = 6 hours.
+# Course data
 # ----------------------------------------------------------------------------
 def course(code, title, semester, description, sessions):
-    return {
-        "code": code,
-        "title": title,
-        "semester": semester,
-        "credits": "2.70",
-        "description": description,
-        "sessions": sessions,
-    }
+    return {"code": code, "title": title, "semester": semester,
+            "credits": "2.70", "description": description, "sessions": sessions}
 
 def S(num, title, topics, focus, takeaway, minutes=60, tag=None):
     return {"num": num, "title": title, "topics": topics,
@@ -360,8 +1189,7 @@ def S(num, title, topics, focus, takeaway, minutes=60, tag=None):
 
 ALL_COURSES = []
 
-# ---------------- YEAR 1 SEMESTER 1 ----------------
-YS1 = "YEAR 1 · SEMESTER 1"
+YS1 = "YEAR 1 \u00b7 SEMESTER 1"
 ALL_COURSES += [
 course("AI.101", "Introduction to Artificial Intelligence", YS1,
  "Origins, definitions, and the landscape of artificial intelligence; how AI perceives, reasons, learns, and acts, and its role in modern engineering.",
@@ -380,7 +1208,7 @@ course("AI.101", "Introduction to Artificial Intelligence", YS1,
 ),
 course("AI.102", "Robotics Fundamentals", YS1,
  "Core robotics concepts: robot anatomy, kinematics basics, sensors, actuators, and the integrate sense-plan-act cycle.",
- [S("1", "Orientation: The Robot as a System", ["What defines a robot", "Sense–plan–act cycle", "Robot vs. automaton", "Applications across sectors"],
+ [S("1", "Orientation: The Robot as a System", ["What defines a robot", "Sense\u2013plan\u2013act cycle", "Robot vs. automaton", "Applications across sectors"],
    "Establish a unified view of a robot as an integrated system.", "A robot senses, plans, and acts in the physical world."),
   S("2", "Robot Anatomy & Classification", ["Links, joints, and degrees of freedom", "Serial vs. parallel manipulators", "Mobile, humanoid, and industrial robots", "Specification and workspaces"],
    "Classify robots by structure and intended workspace.", "Structure determines capability."),
@@ -389,21 +1217,21 @@ course("AI.102", "Robotics Fundamentals", YS1,
   S("4", "Sensors & Perception Basics", ["Proprioceptive vs. exteroceptive sensors", "Encoders, IMUs, LiDAR, cameras", "Sensor characteristics: noise, range, resolution", "Sensor fusion introduction"],
    "Choose and interpret the robot's senses.", "Sensors convert the physical world into data."),
   S("5", "Control Basics for Robotics", ["Open-loop vs. closed-loop control", "Feedback and error signals", "P, PI, PID concepts", "Set-point tracking in motion"],
-   "Regulate robot motion with feedback control.", "Feedback closes the sense–plan–act loop."),
-  S("6", "Integration, Safety & Review", ["Hardware–software integration", "Robot safety standards and E-stops", "Course recap and assessment", "Path toward robotics design"],
+   "Regulate robot motion with feedback control.", "Feedback closes the sense\u2013plan\u2013act loop."),
+  S("6", "Integration, Safety & Review", ["Hardware\u2013software integration", "Robot safety standards and E-stops", "Course recap and assessment", "Path toward robotics design"],
    "Integrate knowledge with safety-first engineering practice.", "Safe integration is the mark of a professional.")],
 ),
 course("AI.103", "Machine Learning", YS1,
  "Foundations of machine learning: supervised, unsupervised, and reinforcement learning; data, models, training, and evaluation.",
- [S("1", "Orientation: Machines That Learn", ["AI vs. ML vs. deep learning", "The learning problem: data → model", "Training, validation, test splits", "Types of ML: supervised, unsupervised, RL"],
+ [S("1", "Orientation: Machines That Learn", ["AI vs. ML vs. deep learning", "The learning problem: data \u2192 model", "Training, validation, test splits", "Types of ML: supervised, unsupervised, RL"],
    "Define machine learning and its place in AI.", "Learning is improving performance through experience."),
-  S("2", "Supervised Learning — Regression", ["Linear regression and least squares", "Polynomial features and overfitting", "Gradient descent optimization", "Evaluating regression models"],
+  S("2", "Supervised Learning \u2014 Regression", ["Linear regression and least squares", "Polynomial features and overfitting", "Gradient descent optimization", "Evaluating regression models"],
    "Fit continuous-output models to data.", "Predict numbers from features."),
-  S("3", "Supervised Learning — Classification", ["Logistic regression", "Decision trees and random forests", "k-Nearest neighbors", "Support vector machines"],
+  S("3", "Supervised Learning \u2014 Classification", ["Logistic regression", "Decision trees and random forests", "k-Nearest neighbors", "Support vector machines"],
    "Assign inputs to discrete classes.", "Draw boundaries that separate classes."),
   S("4", "Unsupervised Learning", ["k-Means clustering", "Hierarchical clustering", "Principal Component Analysis (PCA)", "Dimensionality reduction and visualization"],
    "Discover hidden structure without labels.", "Find patterns where labels do not exist."),
-  S("5", "Model Evaluation & Selection", ["Accuracy, precision, recall, F1", "Confusion matrix", "Cross-validation", "Bias–variance tradeoff"],
+  S("5", "Model Evaluation & Selection", ["Accuracy, precision, recall, F1", "Confusion matrix", "Cross-validation", "Bias\u2013variance tradeoff"],
    "Choose models that generalize, not memorize.", "Generalization is the true test of learning."),
   S("6", "ML in Robotics & Ethics", ["ML for perception and control", "Data bias and fairness", "Course recap and assessment", "Preparation for neural networks"],
    "Apply ML responsibly to robotic systems.", "Data-driven robots must be fair and robust.")],
@@ -434,29 +1262,28 @@ course("AI.105", "Natural Language Processing", YS1,
   S("4", "Language Modeling", ["N-gram language models", "Probability of word sequences", "Perplexity and smoothing", "Neural language models intro"],
    "Predict what word comes next.", "Modeling sequences models language."),
   S("5", "NLP Applications", ["Machine translation", "Sentiment analysis", "Chatbots and dialogue", "Speech recognition intro"],
-   "Deploy language understanding in products.", "NLP powers human–machine conversation."),
-  S("6", "NLP for Robotics & Ethics", ["Human–robot dialogue", "Bias in language models", "Course recap and assessment", "Toward HRI (AI.110)"],
+   "Deploy language understanding in products.", "NLP powers human\u2013machine conversation."),
+  S("6", "NLP for Robotics & Ethics", ["Human\u2013robot dialogue", "Bias in language models", "Course recap and assessment", "Toward HRI (AI.110)"],
    "Enable robots to understand and speak.", "Robots must understand humans, not just commands.")],
 ),
 course("AI.106", "Control Systems", YS1,
- "Classical control theory: modeling dynamic systems, feedback, stability, and PID—foundations for robotic motion.",
+ "Classical control theory: modeling dynamic systems, feedback, stability, and PID\u2014foundations for robotic motion.",
  [S("1", "Orientation: Why Control Matters", ["Open-loop vs. closed-loop", "Control objectives: regulate and track", "Examples in robotics and AI", "Course roadmap"],
    "Motivate feedback control as the regulator of behavior.", "Control makes behavior stable and predictable."),
   S("2", "Modeling Dynamic Systems", ["Differential equations and state space", "Transfer functions and Laplace", "Mechanical and electrical examples", "Block diagrams"],
    "Describe a system mathematically before controlling it.", "A model is the controller's blueprint."),
   S("3", "Time-Domain Analysis", ["Step response and transient specs", "Rise time, settling time, overshoot", "Steady-state error", "First- and second-order systems"],
    "Predict how a system responds over time.", "Transient behavior reveals system character."),
-  S("4", "Stability & Frequency Response", ["Routh–Hurwitz stability", "Bode plots and gain/phase margins", "Nyquist criterion intro", "Root locus basics"],
+  S("4", "Stability & Frequency Response", ["Routh\u2013Hurwitz stability", "Bode plots and gain/phase margins", "Nyquist criterion intro", "Root locus basics"],
    "Guarantee a controller will not diverge.", "Stability is non-negotiable."),
-  S("5", "PID Control", ["Proportional, integral, derivative actions", "PID tuning: Ziegler–Nichols", "PID for motor position and speed", "Anti-windup and limits"],
+  S("5", "PID Control", ["Proportional, integral, derivative actions", "PID tuning: Ziegler\u2013Nichols", "PID for motor position and speed", "Anti-windup and limits"],
    "Implement the most-used controller in robotics.", "PID is the workhorse of motion control."),
   S("6", "Control in Robotics & Review", ["Cascade and feedforward control", "Digital control and sampling", "Course recap and assessment", "Toward intelligent control (AI.308)"],
    "Apply control to real robotic platforms.", "Control turns intent into motion.")],
 ),
 ]
 
-# ---------------- YEAR 1 SEMESTER 2 ----------------
-YS2 = "YEAR 1 · SEMESTER 2"
+YS2 = "YEAR 1 \u00b7 SEMESTER 2"
 ALL_COURSES += [
 course("AI.107", "Data Structures and Algorithms", YS2,
  "Organizing data and analyzing algorithms: arrays, lists, trees, graphs, sorting, searching, and complexity.",
@@ -498,7 +1325,7 @@ course("AI.109", "Embedded Systems", YS2,
    "Bridge the digital processor and analog world.", "Protocols let chips talk to sensors and actuators."),
   S("4", "Real-Time Concepts", ["Determinism and latency", "Task scheduling basics", "RTOS introduction", "Deadlines and jitter"],
    "Guarantee timing-critical robot behavior.", "In robotics, late answers can be wrong answers."),
-  S("5", "Power & Hardware Integration", ["Power budgets and regulators", "PCB layout basics", "Debugging embedded systems", "Hardware–software co-design"],
+  S("5", "Power & Hardware Integration", ["Power budgets and regulators", "PCB layout basics", "Debugging embedded systems", "Hardware\u2013software co-design"],
    "Build reliable embedded hardware.", "Power and layout determine reliability."),
   S("6", "Embedded AI & Review", ["TinyML and on-device inference", "Course recap and assessment", "Toward IoT (AI.201)", "Final project preview"],
    "Run intelligence on the edge.", "AI on the edge means intelligence wherever the robot is.")],
@@ -550,8 +1377,7 @@ course("AI.112", "Computer Graphics", YS2,
 ),
 ]
 
-# ---------------- YEAR 2 SEMESTER 1 ----------------
-Y2S1 = "YEAR 2 · SEMESTER 1"
+Y2S1 = "YEAR 2 \u00b7 SEMESTER 1"
 ALL_COURSES += [
 course("AI.201", "Internet of Things", Y2S1,
  "Networked physical devices: sensors, connectivity, cloud integration, and edge computing for smart systems.",
@@ -588,7 +1414,7 @@ course("AI.203", "Ethics in AI and Robotics", Y2S1,
  [S("1", "Orientation: Why Ethics Now", ["Ethics vs. law vs. policy", "AI and robotics impact", "Responsible innovation", "Course framework"],
    "Treat ethics as a core engineering constraint.", "Building smart is not enough; it must be right."),
   S("2", "Bias & Fairness", ["Sources of bias in data and algorithms", "Fairness metrics", "Mitigation strategies", "Case studies"],
-   "Detect and reduce unfair outcomes.", "Data reflects history—including its injustices."),
+   "Detect and reduce unfair outcomes.", "Data reflects history\u2014including its injustices."),
   S("3", "Safety & Risk", ["Functional safety", "Risk assessment", "Fail-safe design", "Autonomous weapons debate"],
    "Design systems that fail safely.", "Safety must be engineered in, not bolted on."),
   S("4", "Accountability & Transparency", ["Explainable AI (XAI)", "Who is responsible", "Auditability", "Regulatory landscape"],
@@ -600,7 +1426,7 @@ course("AI.203", "Ethics in AI and Robotics", Y2S1,
 ),
 course("AI.204", "Autonomous Systems", Y2S1,
  "Systems that operate without continuous human input: autonomy levels, decision making, and self-management.",
- [S("1", "Orientation: Toward Autonomy", ["Levels of autonomy", "Sense–plan–act autonomy", "Benefits and risks", "Autonomy in AI and robotics"],
+ [S("1", "Orientation: Toward Autonomy", ["Levels of autonomy", "Sense\u2013plan\u2013act autonomy", "Benefits and risks", "Autonomy in AI and robotics"],
    "Define what it means for a machine to act alone.", "Autonomy is delegated decision-making."),
   S("2", "Autonomy Architecture", ["Hierarchical vs. reactive", "Behavior trees", "Finite state machines", "Supervisory control"],
    "Structure autonomous decision-making.", "Architecture determines how autonomously a system acts."),
@@ -615,7 +1441,7 @@ course("AI.204", "Autonomous Systems", Y2S1,
 ),
 course("AI.205", "Reinforcement Learning", Y2S1,
  "Learning from interaction: agents, rewards, policies, and value-based methods for sequential decision making.",
- [S("1", "Orientation: Learning by Doing", ["RL vs. supervised learning", "Agent–environment loop", "Rewards and returns", "Applications in robotics"],
+ [S("1", "Orientation: Learning by Doing", ["RL vs. supervised learning", "Agent\u2013environment loop", "Rewards and returns", "Applications in robotics"],
    "Learn optimal behavior from trial and error.", "Reinforcement learning learns from consequences."),
   S("2", "Markov Decision Processes", ["States, actions, transitions", "Rewards and discounting", "Policies and value functions", "Bellman equation"],
    "Model sequential decisions formally.", "MDPs are the mathematical heart of RL."),
@@ -623,13 +1449,13 @@ course("AI.205", "Reinforcement Learning", Y2S1,
    "Solve MDPs when the model is known.", "Dynamic programming computes optimal policies exactly."),
   S("4", "Model-Free RL", ["Monte Carlo methods", "Temporal difference learning", "Q-learning", "SARSA"],
    "Learn without a model of the world.", "Model-free agents learn from experience alone."),
-  S("5", "Deep RL", ["Deep Q-networks (DQN)", "Policy gradients", "Actor–critic", "RL in continuous control"],
+  S("5", "Deep RL", ["Deep Q-networks (DQN)", "Policy gradients", "Actor\u2013critic", "RL in continuous control"],
    "Scale RL to high-dimensional robot tasks.", "Deep RL lets robots learn complex skills."),
   S("6", "RL for Robots & Review", ["Sim-to-real transfer", "Safe exploration", "Course recap and assessment", "Toward robot learning (AI.403)"],
    "Deploy learned policies on real robots.", "Simulation trains; reality tests.")],
 ),
 course("AI.206", "Computer Architecture", Y2S1,
- "How computers are built: processors, memory hierarchy, I/O, and performance—basis for embedded AI hardware.",
+ "How computers are built: processors, memory hierarchy, I/O, and performance\u2014basis for embedded AI hardware.",
  [S("1", "Orientation: Machines That Compute", ["Von Neumann architecture", "Instruction cycle", "CPU vs. GPU vs. TPU", "Architecture and AI workloads"],
    "Understand the machine that runs the software.", "Architecture determines what software can do."),
   S("2", "Processor Design", ["Datapath and control", "Pipelining", "Superscalar and out-of-order", "Instruction sets (RISC/CISC)"],
@@ -645,8 +1471,7 @@ course("AI.206", "Computer Architecture", Y2S1,
 ),
 ]
 
-# ---------------- YEAR 2 SEMESTER 2 ----------------
-Y2S2 = "YEAR 2 · SEMESTER 2"
+Y2S2 = "YEAR 2 \u00b7 SEMESTER 2"
 ALL_COURSES += [
 course("AI.207", "Mobile Robotics", Y2S2,
  "Robots that move: locomotion, wheeled and legged platforms, navigation, and mobile manipulation.",
@@ -664,10 +1489,10 @@ course("AI.207", "Mobile Robotics", Y2S2,
    "Operate a mobile robot end-to-end.", "A mobile robot must go, sense, and act.")],
 ),
 course("AI.208", "AI for Robotics", Y2S2,
- "Integrating AI methods—perception, planning, learning—into embodied robotic systems.",
- [S("1", "Orientation: Embodied AI", ["AI in the robot loop", "Embodiment and situatedness", "Perception–action coupling", "Course roadmap"],
+ "Integrating AI methods\u2014perception, planning, learning\u2014into embodied robotic systems.",
+ [S("1", "Orientation: Embodied AI", ["AI in the robot loop", "Embodiment and situatedness", "Perception\u2013action coupling", "Course roadmap"],
    "Put intelligence inside a body.", "Embodied AI acts in the world it perceives."),
-  S("2", "Perception for Action", ["Vision for grasping", "Tactile and force sensing", "Multimodal fusion", "Perception–action loop"],
+  S("2", "Perception for Action", ["Vision for grasping", "Tactile and force sensing", "Multimodal fusion", "Perception\u2013action loop"],
    "Let perception guide immediate action.", "Seeing is for doing."),
   S("3", "Learning for Control", ["Imitation learning", "Reinforcement learning for control", "Sim-to-real", "Skill acquisition"],
    "Teach robots skills rather than code them.", "Robots learn best by doing."),
@@ -676,7 +1501,7 @@ course("AI.208", "AI for Robotics", Y2S2,
   S("5", "Human-in-the-Loop AI", ["Teleoperation and shared autonomy", "Robot learning from humans", "Interactive learning", "Trust and transparency"],
    "Blend human and machine intelligence.", "Humans and robots learn together."),
   S("6", "AI for Robotics & Review", ["Integrated robot demo", "Course recap and assessment", "Toward swarm robotics (AI.303)", "Capstone preview"],
-   "Run a full AI–robot pipeline.", "Embodied intelligence is the sum of perception, planning, and action.")],
+   "Run a full AI\u2013robot pipeline.", "Embodied intelligence is the sum of perception, planning, and action.")],
 ),
 course("AI.209", "Fuzzy Logic", Y2S2,
  "Reasoning with imprecision: fuzzy sets, linguistic variables, and fuzzy control for uncertain systems.",
@@ -684,14 +1509,14 @@ course("AI.209", "Fuzzy Logic", Y2S2,
    "Model concepts that admit degrees.", "Many real-world properties are a matter of degree."),
   S("2", "Fuzzy Sets & Membership", ["Membership functions", "Linguistic variables", "Fuzzy operators: AND, OR, NOT", "Fuzzification"],
    "Quantify partial truth.", "Fuzzy logic computes with words."),
-  S("3", "Fuzzy Inference", ["Rule base: IF–THEN rules", "Mamdani and Sugeno inference", "Defuzzification", "Fuzzy rule design"],
+  S("3", "Fuzzy Inference", ["Rule base: IF\u2013THEN rules", "Mamdani and Sugeno inference", "Defuzzification", "Fuzzy rule design"],
    "Derive crisp actions from fuzzy inputs.", "Rules plus inference make decisions."),
   S("4", "Fuzzy Control", ["Fuzzy PID", "Fuzzy control of nonlinear plants", "Tuning membership functions", "Stability considerations"],
    "Control systems without precise models.", "Fuzzy control works where models fail."),
   S("5", "Fuzzy in Robotics", ["Fuzzy obstacle avoidance", "Fuzzy navigation", "Fuzzy sensor fusion", "Case studies"],
    "Handle noisy, uncertain robot data.", "Robots live in a fuzzy world."),
   S("6", "Fuzzy Logic & Review", ["Fuzzy controller implementation", "Course recap and assessment", "Toward deep learning (AI.210)", "Fuzzy vs. PID comparison"],
-   "Embrace uncertainty in control.", "Precision is not always possible—or necessary.")],
+   "Embrace uncertainty in control.", "Precision is not always possible\u2014or necessary.")],
 ),
 course("AI.210", "Deep Learning", Y2S2,
  "Deep neural networks: CNNs, RNNs, transformers, and modern architectures for perception and sequence tasks.",
@@ -727,7 +1552,7 @@ course("AI.212", "Robot Kinematics", Y2S2,
  "Describing robot motion mathematically: forward and inverse kinematics, Jacobians, and manipulator control.",
  [S("1", "Orientation: Motion in Math", ["Why kinematics matters", "Robot links and joints", "Degrees of freedom", "Workspace"],
    "Describe robot geometry precisely.", "Kinematics is the language of robot motion."),
-  S("2", "Representations", ["Rotation matrices", "Homogeneous transforms", "Euler angles and quaternions", "Denavit–Hartenberg convention"],
+  S("2", "Representations", ["Rotation matrices", "Homogeneous transforms", "Euler angles and quaternions", "Denavit\u2013Hartenberg convention"],
    "Represent position and orientation.", "Transforms move frames through space."),
   S("3", "Forward Kinematics", ["Computing end-effector pose", "DH parameters", "Serial-chain FK", "Examples: 2-link, 6-DOF arm"],
    "Find where the tool is from joint angles.", "Forward kinematics answers 'where am I?'."),
@@ -740,8 +1565,7 @@ course("AI.212", "Robot Kinematics", Y2S2,
 ),
 ]
 
-# ---------------- YEAR 3 SEMESTER 1 ----------------
-Y3S1 = "YEAR 3 · SEMESTER 1"
+Y3S1 = "YEAR 3 \u00b7 SEMESTER 1"
 ALL_COURSES += [
 course("AI.301", "Virtual Reality", Y3S1,
  "Immersive synthetic environments: displays, tracking, interaction, and VR for training and simulation.",
@@ -763,15 +1587,15 @@ course("AI.302", "Cyber-Physical Systems", Y3S1,
  [S("1", "Orientation: The Cyber-Physical Merge", ["What is CPS", "Computation + networking + physics", "CPS vs. IoT", "Applications"],
    "Blend the digital with the physical.", "CPS are systems where software moves matter."),
   S("2", "CPS Architecture", ["Sensors, controllers, actuators", "Networked control", "Real-time operating systems", "System-of-systems"],
-   "Architect tight cyber–physical loops.", "Architecture binds computation to physics."),
+   "Architect tight cyber\u2013physical loops.", "Architecture binds computation to physics."),
   S("3", "Real-Time Coordination", ["Time-triggered vs. event-triggered", "Synchronization", "Scheduling", "Determinism"],
-   "Coordinate actions across time.", "Time is the glue of cyber–physical systems."),
+   "Coordinate actions across time.", "Time is the glue of cyber\u2013physical systems."),
   S("4", "Safety & Reliability", ["Fault tolerance", "Redundancy", "Fail-operational design", "Safety standards"],
    "Keep physical processes safe.", "Physical stakes demand high reliability."),
   S("5", "CPS in Robotics", ["Robotic CPS examples", "Smart manufacturing", "Autonomous vehicles", "Medical robotics"],
    "Apply CPS to embodied systems.", "Modern robots are quintessential CPS."),
   S("6", "CPS Design & Review", ["CPS prototype", "Course recap and assessment", "Toward swarm robotics (AI.303)", "System validation"],
-   "Design a cyber–physical system end-to-end.", "CPS must be safe by design.")],
+   "Design a cyber\u2013physical system end-to-end.", "CPS must be safe by design.")],
 ),
 course("AI.303", "Swarm Robotics", Y3S1,
  "Collective robotics: decentralized coordination, emergence, and scalable multi-robot behaviors.",
@@ -835,8 +1659,7 @@ course("AI.306", "Biologically Inspired Robotics", Y3S1,
 ),
 ]
 
-# ---------------- YEAR 3 SEMESTER 2 ----------------
-Y3S2 = "YEAR 3 · SEMESTER 2"
+Y3S2 = "YEAR 3 \u00b7 SEMESTER 2"
 ALL_COURSES += [
 course("AI.307", "Machine Vision", Y3S2,
  "Advanced machine vision: 3D reconstruction, object tracking, and vision systems for industrial and robotic inspection.",
@@ -863,7 +1686,7 @@ course("AI.308", "Intelligent Control Systems", Y3S2,
    "Guarantee performance under uncertainty.", "Robustness is control for the unknown."),
   S("4", "Intelligent Control Methods", ["Fuzzy control", "Neural control", "Genetic-algorithm-based tuning", "Hybrid intelligent control"],
    "Combine learning and control.", "Learning + control = intelligent control."),
-  S("5", "Control for Robotics", ["Impedance and admittance control", "Force control", "Whole-body control", "Physical human–robot interaction"],
+  S("5", "Control for Robotics", ["Impedance and admittance control", "Force control", "Whole-body control", "Physical human\u2013robot interaction"],
    "Control robots that touch the world.", "Intelligent control enables safe contact."),
   S("6", "Intelligent Control & Review", ["Controller implementation", "Course recap and assessment", "Toward multi-robot systems (AI.309)", "Control lab"],
    "Tune an adaptive controller on hardware.", "The best controllers learn as they act.")],
@@ -911,7 +1734,7 @@ course("AI.311", "Robotics Planning", Y3S2,
   S("5", "Planning Under Uncertainty", ["Contingent planning", "Belief-space planning", "Online replanning", "Robust plans"],
    "Plan when outcomes are uncertain.", "Good plans anticipate failure."),
   S("6", "Robotics Planning & Review", ["Planning demo on robot", "Course recap and assessment", "Toward social robotics (AI.312)", "Planning competition"],
-   "Execute a full task–motion plan.", "Plans turn goals into robot motion.")],
+   "Execute a full task\u2013motion plan.", "Plans turn goals into robot motion.")],
 ),
 course("AI.312", "Social Robotics", Y3S2,
  "Robots in society: social norms, long-term interaction, ethics, and robots as companions and collaborators.",
@@ -930,8 +1753,7 @@ course("AI.312", "Social Robotics", Y3S2,
 ),
 ]
 
-# ---------------- YEAR 4 SEMESTER 1 ----------------
-Y4S1 = "YEAR 4 · SEMESTER 1"
+Y4S1 = "YEAR 4 \u00b7 SEMESTER 1"
 ALL_COURSES += [
 course("AI.401", "Evolutionary Robotics", Y4S1,
  "Evolutionary algorithms for robot design and behavior: morphology, control co-optimization, and artificial life.",
@@ -949,7 +1771,7 @@ course("AI.401", "Evolutionary Robotics", Y4S1,
    "Evolve a robot in simulation.", "Evolution is creativity with selection.")],
 ),
 course("AI.402", "Robot Ethics", Y4S1,
- "Ethics specific to robots: autonomy, responsibility, harm, and robot–human moral relationships.",
+ "Ethics specific to robots: autonomy, responsibility, harm, and robot\u2013human moral relationships.",
  [S("1", "Orientation: Ethics of Robots", ["Robot ethics vs. AI ethics", "Moral agency of robots", "Responsibility gaps", "Course framework"],
    "Ask what robots ought to do.", "Robots act in the world; their actions have moral weight."),
   S("2", "Autonomy & Responsibility", ["Moral responsibility", "Command responsibility", "Autonomous weapons", "Accountability chains"],
@@ -957,9 +1779,9 @@ course("AI.402", "Robot Ethics", Y4S1,
   S("3", "Harm & Safety", ["Physical harm", "Psychological harm", "Risk-benefit analysis", "Safe robot design"],
    "Prevent robots from causing harm.", "Safety is an ethical obligation."),
   S("4", "Robot Rights & Status", ["Robot personhood debate", "Moral status of machines", "Property vs. person", "Legal perspectives"],
-   "Decide how the law sees robots.", "Robots are tools—until society says otherwise."),
-  S("5", "Human–Robot Moral Relations", ["Trust and deception", "Emotional attachment", "Care robots and dignity", "Robot nudging"],
-   "Respect human–robot bonds.", "Relationships with robots shape human behavior."),
+   "Decide how the law sees robots.", "Robots are tools\u2014until society says otherwise."),
+  S("5", "Human\u2013Robot Moral Relations", ["Trust and deception", "Emotional attachment", "Care robots and dignity", "Robot nudging"],
+   "Respect human\u2013robot bonds.", "Relationships with robots shape human behavior."),
   S("6", "Robot Ethics & Review", ["Case studies", "Course recap and assessment", "Toward AI ethics (AI.404)", "Ethics panel"],
    "Apply ethical reasoning to robotics.", "Ethical robots serve humanity.")],
 ),
@@ -1016,7 +1838,7 @@ course("AI.406", "Robot Perception", Y4S1,
    "Use deep networks to perceive.", "Deep perception sees richly and quickly."),
   S("3", "Tactile & Force Sensing", ["Tactile sensors", "Force-torque sensing", "Slip and texture", "Tactile servoing"],
    "Feel what the robot touches.", "Touch completes vision."),
-  S("4", "Perception for Autonomy", ["Obstacle and free space", "Semantic perception", "Human detection", "Perception–action loop"],
+  S("4", "Perception for Autonomy", ["Obstacle and free space", "Semantic perception", "Human detection", "Perception\u2013action loop"],
    "Perceive to navigate and act.", "Autonomous perception drives action."),
   S("5", "Perception Systems", ["Sensor calibration", "Data association", "Real-time pipelines", "Perception validation"],
    "Engineer robust perception systems.", "Perception must work in the wild."),
@@ -1025,8 +1847,7 @@ course("AI.406", "Robot Perception", Y4S1,
 ),
 ]
 
-# ---------------- YEAR 4 SEMESTER 2 ----------------
-Y4S2 = "YEAR 4 · SEMESTER 2"
+Y4S2 = "YEAR 4 \u00b7 SEMESTER 2"
 ALL_COURSES += [
 course("AI.407", "Robot Navigation", Y4S2,
  "Moving safely through space: global and local path planning, obstacle avoidance, and navigation stacks.",
@@ -1067,7 +1888,7 @@ course("AI.409", "Robot Simulation", Y4S2,
   S("3", "Simulation Workflow", ["URDF/SDF models", "Worlds and environments", "Sensors in sim", "Logging and replay"],
    "Build simulation scenes.", "Models and worlds define the sim."),
   S("4", "Sim-to-Real Transfer", ["Domain randomization", "System identification", "Transfer learning", "Hardware validation"],
-   "Move from sim to real reliably.", "The sim–real gap must be bridged."),
+   "Move from sim to real reliably.", "The sim\u2013real gap must be bridged."),
   S("5", "Simulation for AI & Robotics", ["Training RL in sim", "Testing perception", "Regression testing", "CI for robotics"],
    "Develop and test in simulation.", "Simulation accelerates development."),
   S("6", "Robot Simulation & Review", ["Simulation project", "Course recap and assessment", "Toward robot vision (AI.410)", "Sim showcase"],
@@ -1075,7 +1896,7 @@ course("AI.409", "Robot Simulation", Y4S2,
 ),
 course("AI.410", "Robot Vision", Y4S2,
  "Vision integrated with robot action: visual servoing, hand-eye coordination, and vision-based manipulation.",
- [S("1", "Orientation: Vision in Action", ["Robot vision vs. machine vision", "Hand–eye coordination", "Vision–action loop", "Applications"],
+ [S("1", "Orientation: Vision in Action", ["Robot vision vs. machine vision", "Hand\u2013eye coordination", "Vision\u2013action loop", "Applications"],
    "Let vision guide robot motion.", "Vision directs the hand."),
   S("2", "Visual Servoing", ["Image-based vs. position-based", "Visual servo control", "Camera calibration", "Eye-in-hand vs. eye-to-hand"],
    "Close the loop through the camera.", "Visual servoing moves by what it sees."),
@@ -1085,7 +1906,7 @@ course("AI.410", "Robot Vision", Y4S2,
    "Manipulate with visual feedback.", "Vision guides manipulation precisely."),
   S("5", "Robot Vision Systems", ["Pipeline design", "Real-time constraints", "Calibration and maintenance", "Evaluation metrics"],
    "Integrate vision on robots.", "Robot vision must be fast and robust."),
-  S("6", "Robot Vision & Review", ["Vision–robot demo", "Course recap and assessment", "Toward robot design (AI.411)", "Vision task"],
+  S("6", "Robot Vision & Review", ["Vision\u2013robot demo", "Course recap and assessment", "Toward robot design (AI.411)", "Vision task"],
    "Combine sight and motion on a robot.", "Sight plus action equals robot vision.")],
 ),
 course("AI.411", "Robot Design", Y4S2,
@@ -1100,7 +1921,7 @@ course("AI.411", "Robot Design", Y4S2,
    "Architect robot software.", "Software coordinates the whole robot."),
   S("5", "Integration & Testing", ["System integration", "Testing and validation", "Failure modes", "Iteration"],
    "Assemble and verify the robot.", "Integration reveals the real design."),
-  S("6", "Robot Design & Review", ["Design review and demo", "Course recap and assessment", "Toward capstone (AI.450)", "Portfolio"],
+  S("6", "Robot Design & Review", ["Design review and demo", "Course recap and assessment", "Toward capstone project (AI.450)", "Portfolio"],
    "Present a complete robot design.", "A robot is judged as a whole system.")],
 ),
 course("AI.450", "Project", Y4S2,
@@ -1125,15 +1946,20 @@ course("AI.450", "Project", Y4S2,
 # ----------------------------------------------------------------------------
 def main():
     base_out = "/home/user/allnew/output"
+    if os.path.exists(base_out):
+        import shutil
+        shutil.rmtree(base_out)
     os.makedirs(base_out, exist_ok=True)
 
     total_slides = 0
+    total_diagrams = 0
     manifest_lines = ["# Course Orientation Presentations\n",
-                      "Triune Biblical University Global Extension USA — Bachelor of Artificial Intelligence and Robotics Engineering\n",
-                      "Each PDF is a premium cinematic 6-hour orientation lecture. Every slide footer carries the university name.\n\n"]
+                      "Triune Biblical University Global Extension USA \u2014 Bachelor of Artificial Intelligence and Robotics Engineering\n",
+                      "Each PDF is a premium cinematic 6-hour orientation lecture with AI-generated cover imagery and vector diagrams.\n",
+                      "Every slide footer carries: TRIUNE BIBLICAL UNIVERSITY GLOBAL EXTENSION USA\n\n"]
 
     for course in ALL_COURSES:
-        sem_folder = course["semester"].replace(" · ", "_").replace(" ", "_")
+        sem_folder = course["semester"].replace(" \u00b7 ", "_").replace(" ", "_")
         out_dir = os.path.join(base_out, sem_folder)
         os.makedirs(out_dir, exist_ok=True)
 
@@ -1142,7 +1968,7 @@ def main():
 
         slides = build_course(course, out_path)
         total_slides += slides
-        manifest_lines.append(f"- **{course['code']}** — {course['title']}  ({course['semester']}, {course['credits']} cr) → `{out_path}`  ({slides} slides)")
+        manifest_lines.append(f"- **{course['code']}** \u2014 {course['title']}  ({course['semester']}, {course['credits']} cr) \u2192 `{out_path}`  ({slides} slides)")
 
     manifest_path = os.path.join(base_out, "MANIFEST.md")
     with open(manifest_path, "w") as f:

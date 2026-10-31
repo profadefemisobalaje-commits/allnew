@@ -2,7 +2,9 @@
 
 Triune Biblical University Global Extension USA — Bachelor of Artificial Intelligence and Robotics Engineering
 
-Each PDF is a premium cinematic 6-hour orientation lecture. Every slide footer carries the university name.
+Each PDF is a premium cinematic 6-hour orientation lecture with AI-generated cover imagery and vector diagrams.
+
+Every slide footer carries: TRIUNE BIBLICAL UNIVERSITY GLOBAL EXTENSION USA
 
 
 - **AI.101** — Introduction to Artificial Intelligence  (YEAR 1 · SEMESTER 1, 2.70 cr) → `/home/user/allnew/output/YEAR_1_SEMESTER_1/ai101_-_introduction_to_artificial_intelligence.pdf`  (7 slides)
